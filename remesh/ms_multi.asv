@@ -1,0 +1,358 @@
+
+%Nondimensionalized code
+
+%verbose = false;
+%supress_outputs = true;
+time_readouts = false;
+%%% directory
+
+start = p.start;
+%dir = sprintf('./data/ps_batch_data/pnd_%d',pnd);
+if start == 0
+    delete(dir + "/*")
+    [status, msg, msgID] = mkdir(dir);
+end
+%run('./isoremesh/create_mex.m')
+addpath('./isoremesh')
+addpath('./SH')
+
+V0=0;eps_v=0;
+%% system init
+%%% 0 for new simulation, otherwise continue from geo"start".mat
+start = p.start;
+
+if start == 0
+    p.total_time=0;
+    %%% geometry
+    [P, M] = subdivided_sphere(p.subdivisions);
+    %load("./data/precrumpled.mat")
+    geo = Geometry(M, P);
+    [M, P] = remeshing(int32(M), P, int32([]), mean(geo.he_length), int32(10));
+    geo = Geometry(M, P);
+    geo = perturb_rand(geo,p.roughness);
+
+    % mode_for_pert = round(sqrt(8*pi*p.pnd)-.5);
+    % if mode_for_pert<4
+    %     disp(mode_for_pert);
+    %     geo = perturb_modal(geo,mode_for_pert,.005);
+    % end
+
+    r.edge_length = mean(geo.he_length);
+    slp_cache = stokeslet_SLP_triangle_setup(M);
+
+    %geo = create_inner_layer(geo);
+
+    P = geo.V;M = geo.F; %new
+    Gamma = p.pnd;
+    %%% optimizer
+    o.h = 1; o.eta =.27; o.k = 0; o.metric = "lap";
+    o.tol_f = .05; o.tol_d = .01; o.tol_v = 1e2; o.max_iter = 10000;
+    o.h_old = o.h; o.eta_old = o.eta;
+    %%% Extra parameters
+    p.k = 1000;%100/(5e-2); % dilational viscosity
+    p.area0 = geo.area;
+    %%% remesh
+     % target edge length
+    r.n_iter = 3; % remeshing iterations
+    r.smooth = 0; % smoothing factor
+    %---  line search 
+    lsr.c       = 1e-4; % small required decrease in E (monotone E decrease)
+    lsr.tau     = 0.5; % backtracking factor
+    lsr.max_iter = 20; % max backtracking iterations
+    lsr.enabled = false; % use damped gradient steps by default
+    %%% initialize
+    velocity = zeros(size(P, 1) * 3, 1);
+    lambda=0.;
+else
+    p.total_time=0; dt_override = p.dt; remesh_size=p.remesh_size;
+    load(dir + sprintf("geo%d.mat", start), "M", "P", "velocity", "lambda", "o", "r","p");
+    p.dt = dt_override; p.remesh_size=remesh_size;
+    geo = Geometry(M, P);
+    Gamma = p.pnd;
+    slp_cache = stokeslet_SLP_triangle_setup(M);
+    %%% optimizer OVERRIDES
+    %o.h=.0000027;
+    o.tol_f=.01;
+    %o.metric = 'bih'; o.eta = 1;
+    %p.k=10;
+    %o.h = .1; o.eta = 10; o.k = 0; o.metric = "lap";%
+    %o.tol_f = .05; o.tol_d = .01; o.tol_v = 1e2; o.max_iter = 10000; 
+    %o.h_old = o.h; o.eta_old = o.eta; o.mem=0;
+    %%% remesh  
+    r.n_iter = 3; % remeshing iterations
+    r.smooth = 0; % smoothing factor
+    %---  line search 
+    lsr.c       = 1e-9; % small required decrease in E (monotone E decrease)
+    lsr.tau     = 0.5; % backtracking factor
+    lsr.max_iter = 100; % max backtracking iterations
+    if ~isfield(lsr, 'enabled')
+        lsr.enabled = false; % preserve old restart files
+    end
+    
+    
+    if p.remesh_size ~= 0
+        r.edge_length = p.remesh_size*mean(geo.he_length); % target edge length
+        disp('Remeshing at start!')
+        geo_pre = geo;
+        [M, P] = remeshing(int32(M), P, int32([]), r.edge_length, int32(20));
+        geo = Geometry(M, P);
+        disp("old size:" + string(size(geo_pre.F)))
+        disp("new size:" + string(size(geo.F)))
+        [velocity] = map_data(geo, geo_pre, velocity);
+        slp_cache = stokeslet_SLP_triangle_setup(M);
+        disp('Initial remesh complete!')
+    end
+
+end
+
+
+
+%% main loop (not supposed to be modified)
+for t = (start + 1):p.T
+    tic;
+    Sd = 1; Da = 1; gamy=-1;
+    
+    %%% incremental potential minimization
+    geo0=geo;lambda0=lambda; %o.h = o.h_old; o.eta = o.eta_old;
+    [~, K, ~, div, KTK, DTD] = geo.evolving_operators(); %calculate evolutions operators
+    P0 = P(:); 
+    twoHn = geo.lap * P;
+    fb = geo.bending_force(1); %bending force
+    fs = reshape(lambda * twoHn, size(P)); %surface tension force
+    fv = reshape((- 2 * (KTK + p.k * DTD) * (P(:) - P0)/(p.dt)), size(P)); %viscous force with bulk viscosity p.k
+    
+    %%% NEW STUFF
+    fp = -16*pi*Gamma*geo.v_normal.*geo.v_area; %pressure jump force
+    
+    
+    fr = 0*fp; 
+    %if p.beta ~= 0 
+    %         dphi = TPE_grad_truncated_multigrid_nd(geo,p,.15); fr = p.beta*dphi; end
+    %fp = -16*pi*Gamma*geo.v_normal.*geo.v_area; %pressure jump force
+    f_mem = fb+fs+fv;
+    alpha_mem   = o.h;
+    %---  energy functions
+    lagrangian = @(P_, willmore_, lambda_, area_, v_area_, v_normal_, fr_, fp_, f_mem_, fperm_) ...
+                (P_ - P0)' * (KTK + p.k * DTD) * (P_ - P0) ... %visc
+               + p.dt * willmore_ ... %bending
+               - p.dt * (P_ - P0)' * (fr_(:)+fp_(:)) ... % pressure and contact parts of the lagrangian
+               - p.dt * (area_ - p.area0) * lambda_... %surface (replace my tension forces
+               + p.dt * Sd * sum(v_area_.*dot(f_mem_,stokeslet_SLP_triangle(reshape(P_, [], 3), M, f_mem_, slp_cache),2))... %hydrodynamic interactions.
+               + p.dt * Sd * Da * sum(v_area_.*dot(fperm_, fperm_, 2))... %permeation drag 
+               - p.dt * sum(v_area_.*dot(f_mem_,shear_flow(reshape(P_, [], 3),gamy)));  %from background flow
+
+    %---  approx Hessian
+    mass0 = spdiags(geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
+    mass0_inv = spdiags(1./geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
+    bih = geo.lap * mass0_inv * geo.lap;
+    bih = blkdiag(bih, bih, bih);
+    Hess = 2 * (KTK + p.k * DTD) ...
+        + 0.5* p.dt * bih ...
+        + 1e-3 * r.edge_length^(-2) * blkdiag(mass0, mass0, mass0);
+    %[~,p] = chol(Hess); %check if matrix symmetric positive definite
+    
+    P(:) = P0 + p.dt * velocity; %update positions to new timestep with euler step from previously solved velocity field
+    eps_f = Inf; eps_d = Inf; eps_pie = Inf; j = 0; %initialize residual variables
+    geo = Geometry(M,P);
+    while ((eps_f > o.tol_f) || (eps_d > o.tol_d)) || (eps_v > o.tol_v) && (j < o.max_iter)
+        eps_f_mem = eps_f;
+        %%% forces
+        f_mean_curvature = mean(geo.v_mean_curvature(geo.F),2);
+        twoHn = geo.lap * P; Ln = 4*(reshape(div'*f_mean_curvature(:),size(P)) + geo.v_gaussian_curvature.*geo.v_normal);
+        fb = geo.bending_force(1); %bending force
+        fs = reshape(lambda * twoHn, size(P)); %surface tension force
+        fv = reshape((- 2 * (KTK + p.k * DTD) * (P(:) - P0)/(p.dt)), size(P)); %viscous force with bulk viscosity p.k
+        fp = -16*pi*Gamma*geo.v_normal.*geo.v_area; %pressure jump force
+
+        f_mem = fb+fs+fv; fperm = (Gamma + dot(f_mem,geo.v_normal,2)).*Ln;
+        slpout = stokeslet_SLP_triangle(P, M, f_mem, slp_cache); u_back = shearextensionflow(P,gamy);
+        fm = reshape(2*Sd*KTK*slpout(:) - 2*KTK*u_back(:) - 2*Sd*Da*fperm(:), size(P));
+        
+        fr = 0*fb;
+         %if p.beta ~= 0 
+        %     dphi = TPE_grad_truncated_multigrid_nd(geo,p,.15); fr = p.beta*dphi; end
+
+        b = p.dt*(fv(:) + fb(:) + fp(:) + fr(:) + fs(:) + fm(:));
+        
+        dP = Hess \ b;
+
+        %---  force norm 
+        quad = dP' * b;
+        if quad <= 0 
+            message = sprintf('quad = %0.4g should be positive definite', quad);
+            error(message);
+        else
+            eps_f_original = sqrt(quad); 
+        end
+        
+        %---  gradient descent 4: Armijo backtracking with lambda fixed  
+        accepted = false;
+        if lsr.enabled
+            E = lagrangian(P(:), geo.willmore_energy(1), lambda, geo.area, geo.v_area, geo.v_normal, fr, fp, f_mem, fperm);
+            alpha = min(alpha_mem, 1 / max(1, eps_f_original));   % adjust alpha based on force norm, max = 1, min = 1/eps_f_original 
+            for ls_iter = 1:lsr.max_iter
+                P_new = reshape(P(:) + alpha * dP, [], 3); %generate speculative geometry
+                geo_new = Geometry(M, P_new);
+                fr = 0*fb;
+                %if p.beta ~= 0 
+                 %   dphi = TPE_grad_truncated_multigrid_nd(geo,p,.15); fr = p.beta*dphi; end
+                twoHn_new = geo_new.lap * P_new;
+                f_mean_curvature_new = mean(geo_new.v_mean_curvature(geo_new.F),2);
+                Ln_new = 4*(reshape(div'*f_mean_curvature_new(:),size(P_new)) + geo_new.v_gaussian_curvature.*geo_new.v_normal);
+                fb_new = geo_new.bending_force(1);
+                fs_new = reshape(lambda * twoHn_new, size(P_new));
+                fv_new = reshape((- 2 * (KTK + p.k * DTD) * (P_new(:) - P0)/(p.dt)), size(P_new));
+                fp = -16*pi*Gamma*geo_new.v_normal.*geo_new.v_area;
+                f_mem_new = fb_new + fs_new + fv_new;
+                fperm_new = (Gamma + dot(f_mem_new, geo_new.v_normal, 2)).*Ln_new;
+
+                dE = E - lagrangian(P_new(:), geo_new.willmore_energy(1), lambda, geo_new.area, geo_new.v_area, geo_new.v_normal, fr, fp, f_mem_new, fperm_new); %calculate Rayleighian vs Rayleighian of initial state
+                pred = alpha * quad;
+                if dE >= lsr.c * pred
+                    P = P_new;
+                    geo = geo_new;
+                    accepted = true;
+                    alpha_mem   = min(alpha/lsr.tau, o.h);  % grow next try
+                    break;
+                else
+                    alpha = lsr.tau * alpha;  % shrink alpha
+                end
+            end
+            if ~accepted
+                disp('backtracking failed! reverting to gradient descent')
+            end
+        end
+        if ~accepted
+            P = reshape(P(:) + o.h * dP, [], 3); %generate speculative geometry
+            geo = Geometry(M, P);
+        end
+
+        %---  gradient ascent 2: update tension
+        darea = (geo.area - p.area0); %percent area change
+        lambda = lambda - o.eta * darea;
+
+        eps_d = abs(darea)/p.area0;
+
+        % u =  reshape((P(:) - P0(:))/(p.dt),size(P)); 
+        % dEs = sum(dot(fs,u,2));
+        % dEv = sum(dot(fv,u,2));
+        % dEb = sum(dot(fb,u,2));
+        % dEp = sum(dot(fp,u,2));
+        % dEc = sum(dot(fr,u,2));
+        % dEt = dEb+dEc+dEp+dEv;
+        % eps_f = abs(dEt)/max(abs([dEv,dEb,dEp,dEc]));
+        eps_f = eps_f_original;
+        eps_v = geo.volume - V0;
+        if verbose fprintf("t = %d, j = %d, eps_f = %0.4g, eps_d = %0.4g, eps_v = %0.4g \n", t, j, eps_f, eps_d, eps_v); end
+        if eps_f > eps_f_mem
+            mem = mem+1;
+            if mem > 3 || j>100
+                disp('eps_f monotonically increasing! decreasing iteration size and restarting')
+                o.h = .6*o.h;
+                eps_f = Inf; eps_d = Inf; eps_v = Inf; j = 0; geo=geo0;lambda = lambda0; %re-initialize
+                P(:) = P0 + p.dt * velocity; %update positions to new timestep with euler step from previously solved velocity field
+                continue
+            end
+        else
+            mem = 0;
+        end
+            
+        if abs(eps_v) > 10
+            disp('eps_v too high! decreasing iteration size and restarting')
+            o.h = .3*o.h; o.eta = .3*o.eta;
+            eps_f = Inf; eps_d = Inf; eps_v = Inf; j = 0; geo=geo0;lambda = lambda0; %re-initialize
+            P(:) = P0 + p.dt * velocity; %update positions to new timestep with euler step from previously solved velocity field
+            continue
+        end
+
+
+        j = j + 1;
+    end
+
+
+    %%% save data
+    p.total_time = p.total_time + toc;
+    [P, velocity] = rm_rigid(P, (P(:) - P0) / p.dt, geo.v_area);
+    
+    if time_readouts
+        fprintf('t= %i \n',t);
+        fprintf('Iteration time: %0.4f \n',toc)
+    else
+        if ~supress_outputs
+            fprintf("Save geo%d.mat at j =%d, eps_f = %0.4g, eps_d = %0.4g, eps_v = %0.4g, total time: %0.4f\n", t, j, eps_f, eps_d,eps_v,p.total_time);
+        end
+    end
+    %%% update geometry, remesh if needed
+
+    if deformation_criterion(geo)%mod(t,10)==0%~geo.is_delaunay(0) 
+        geo_pre = Geometry(M, P);
+        if ~time_readouts
+            if ~supress_outputs
+                %fprintf("Remeshing. t = %d \n", t);
+            end
+        end
+        tic;
+        %[P, M] = IO.remesh(P, M, r, dir, t); %Old Version using houdini
+        [M, P] = remeshing(int32(M), P, int32([]), r.edge_length, int32(r.n_iter));
+        
+        %Scale to conserve area
+        geo = Geometry(M, P);
+        P = P*sqrt(p.area0/geo.area);
+        geo = Geometry(M,P);
+        velocity = map_data(geo, geo_pre, velocity);
+        slp_cache = stokeslet_SLP_triangle_setup(M);
+        if time_readouts
+            fprintf('Remeshing time: %0.4f \n',toc)
+            fprintf('Newmesh delaunay? %i \n',geo.is_delaunay(0))
+        end
+        disp('Remeshed!')
+    end
+    
+    %Resize
+    geo = Geometry(M, P);
+    P = P*sqrt(p.area0/geo.area);
+    geo = Geometry(M,P);
+    save(dir + sprintf("geo%d.mat", t), "M", "P", "velocity", "lambda", "o", "r","p");
+    %save(dir + sprintf("energies%d.mat", t), "dEb","dEc","dEp","dEs","dEv","dEt");
+
+end
+
+
+%% helper functions
+function H = preconditioner(geo, metric)
+    % preconditioner for incremental potential minimization
+    switch  metric 
+        case "bih"
+            mass0 = spdiags(geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
+            mass0_inv = spdiags(1./geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
+            H = mass0 * geo.lap * mass0_inv * geo.lap;
+            H = blkdiag(H, H, H);
+        case "lap"
+            H = geo.lap;
+            H = blkdiag(H, H, H);
+        case "stks"
+            H = KTK;
+        case "l2"
+            H = sparse(eye(3*geo.mesh.n_v));
+    end
+end
+
+function velocity = map_data(geo, geo_pre, velocity_pre)
+    % interpolate data from previous geometry to current geometry
+    kdtree = KDTreeSearcher(geo_pre.f_center);
+    %%% interpolate vertex data - velocity
+    [face, uv, count, fail] = project(geo_pre.V, geo_pre.F, geo.V, kdtree, 6);
+    if fail
+        error("projection failed.");
+        disp("projection failed.")
+    end
+    velocity = interpolate(geo_pre.F, face, uv, reshape(velocity_pre, [], 3));
+    velocity = velocity(:);
+end
+
+% function E_out = lagrangian(P_, willmore_, lambda_, area_,P0_,p_,fr_,fp_,KTK_,DTD_) 
+% E_out = (P_ - P0_)' * (KTK_ + p_.k * DTD_) * (P_ - P0_) ... %visc
+%                + p_.dt * willmore_ ... %bending
+%                - p_.dt * (P_ - P0_)' * (fr_(:)+fp_(:)) ... %active (replace with contact for me
+%                - p_.dt * (area_ - p_.area0) * lambda_; %surface (replace my tension forces
+% end
