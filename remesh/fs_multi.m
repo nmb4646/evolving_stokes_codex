@@ -303,7 +303,9 @@ for t = (start + 1):p.T
         u_background = shear_flow(P, p.gamy);
         c = bie_residual(P, M, f, geo, u, u_background, slp_cache, p);
         f = f + p.chi * c;
-        eps_c = norm(c(:)) / (p.Sd*p.Da*sqrt(numel(c)));
+        eps_c_raw = norm(c(:)) / (p.Sd*p.Da*sqrt(numel(c)));
+        u_rms = norm(u(:)) / sqrt(numel(u));
+        eps_c = eps_c_raw / max(u_rms, 1e-14);
         %eps_b = eps_b/p.dt;
 
         % Non-invasive f-only line search. Disabled for now because each
