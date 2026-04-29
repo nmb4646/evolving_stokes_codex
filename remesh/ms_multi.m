@@ -141,13 +141,13 @@ for t = (start + 1):p.T
     f_mem = fb+fs+fv;
     alpha_mem   = o.h;
     %---  energy functions
-    lagrangian = @(P_, willmore_, lambda_, area_, v_area_, v_normal_, fr_, fp_, f_mem_, fperm_) ...
+    lagrangian = @(P_, willmore_, lambda_, area_, v_area_, v_normal_, fr_, fp_, f_mem_) ...
                 (P_ - P0)' * (KTK + p.k * DTD) * (P_ - P0) ... %visc
                + p.dt * willmore_ ... %bending
                - p.dt * (P_ - P0)' * (fr_(:)+fp_(:)) ... % pressure and contact parts of the lagrangian
                - p.dt * (area_ - p.area0) * lambda_... %surface (replace my tension forces
                + p.dt * Sd * sum(v_area_.*dot(f_mem_,stokeslet_SLP_triangle(reshape(P_, [], 3), M, f_mem_, slp_cache),2))... %hydrodynamic interactions.
-               + p.dt * Sd * Da * sum(v_area_.*dot(fperm_, fperm_, 2))... %permeation drag 
+               + p.dt * bie_slip_energy(P_, P0, p.dt, M, f_mem_, slp_cache, gamy, v_area_, Sd, Da) ... %BIE permeation drag
                - p.dt * sum(v_area_.*dot(f_mem_,shearextensionflow(reshape(P_, [], 3),gamy)));  %from background flow
 
     %---  approx Hessian
@@ -166,16 +166,27 @@ for t = (start + 1):p.T
     while ((eps_f > o.tol_f) || (eps_d > o.tol_d)) || (eps_v > o.tol_v) && (j < o.max_iter)
         eps_f_mem = eps_f;
         %%% forces
-        f_mean_curvature = mean(geo.v_mean_curvature(geo.F),2);
-        twoHn = geo.lap * P; Ln = 4*(reshape(div'*f_mean_curvature(:),size(P)) + geo.v_gaussian_curvature.*geo.v_normal);
+        twoHn = geo.lap * P;
         fb = geo.bending_force(1); %bending force
         fs = reshape(lambda * twoHn, size(P)); %surface tension force
         fv = reshape((- 2 * (KTK + p.k * DTD) * (P(:) - P0)/(p.dt)), size(P)); %viscous force with bulk viscosity p.k
         fp = -16*pi*Gamma*geo.v_normal.*geo.v_area; %pressure jump force
 
-        f_mem = fb+fs+fv; fperm = (Gamma + dot(f_mem,geo.v_normal,2)).*Ln;
-        slpout = stokeslet_SLP_triangle(P, M, f_mem, slp_cache); u_back = shearextensionflow(P,gamy);
-        fm = reshape(2*Sd*KTK*slpout(:) - 2*KTK*u_back(:) - 2*Sd*Da*fperm(:), size(P));
+        f_mem = fb+fs+fv;
+        if Da <= 0 || Sd <= 0
+            error('Updated BIE variational terms require positive p.Da and p.Sd.');
+        end
+        slpout = stokeslet_SLP_triangle(P, M, f_mem, slp_cache);
+        u_back = shearextensionflow(P,gamy);
+        u_mem = reshape((P(:) - P0(:))/(p.dt), size(P));
+        q = u_mem - u_back + slpout;
+        q_slpout = stokeslet_SLP_triangle(P, M, q, slp_cache);
+        % Equation (36) BIE variational terms: L uinf, -2 Sd L u^d,
+        % 2 Da^-1 Sd^-1 q, and Da^-1 L S[q].
+        fm = reshape(KTK*u_back(:) ...
+                   - 2*Sd*KTK*slpout(:) ...
+                   + 2/(Da*Sd)*q(:) ...
+                   + (1/Da)*KTK*q_slpout(:), size(P));
         
         fr = 0*fb;
          %if p.beta ~= 0 
@@ -197,7 +208,7 @@ for t = (start + 1):p.T
         %---  gradient descent 4: Armijo backtracking with lambda fixed  
         accepted = false;
         if lsr.enabled
-            E = lagrangian(P(:), geo.willmore_energy(1), lambda, geo.area, geo.v_area, geo.v_normal, fr, fp, f_mem, fperm);
+            E = lagrangian(P(:), geo.willmore_energy(1), lambda, geo.area, geo.v_area, geo.v_normal, fr, fp, f_mem);
             alpha = min(alpha_mem, 1 / max(1, eps_f_original));   % adjust alpha based on force norm, max = 1, min = 1/eps_f_original 
             for ls_iter = 1:lsr.max_iter
                 P_new = reshape(P(:) + alpha * dP, [], 3); %generate speculative geometry
@@ -206,16 +217,13 @@ for t = (start + 1):p.T
                 %if p.beta ~= 0 
                  %   dphi = TPE_grad_truncated_multigrid_nd(geo,p,.15); fr = p.beta*dphi; end
                 twoHn_new = geo_new.lap * P_new;
-                f_mean_curvature_new = mean(geo_new.v_mean_curvature(geo_new.F),2);
-                Ln_new = 4*(reshape(div'*f_mean_curvature_new(:),size(P_new)) + geo_new.v_gaussian_curvature.*geo_new.v_normal);
                 fb_new = geo_new.bending_force(1);
                 fs_new = reshape(lambda * twoHn_new, size(P_new));
                 fv_new = reshape((- 2 * (KTK + p.k * DTD) * (P_new(:) - P0)/(p.dt)), size(P_new));
                 fp = -16*pi*Gamma*geo_new.v_normal.*geo_new.v_area;
                 f_mem_new = fb_new + fs_new + fv_new;
-                fperm_new = (Gamma + dot(f_mem_new, geo_new.v_normal, 2)).*Ln_new;
 
-                dE = E - lagrangian(P_new(:), geo_new.willmore_energy(1), lambda, geo_new.area, geo_new.v_area, geo_new.v_normal, fr, fp, f_mem_new, fperm_new); %calculate Rayleighian vs Rayleighian of initial state
+                dE = E - lagrangian(P_new(:), geo_new.willmore_energy(1), lambda, geo_new.area, geo_new.v_area, geo_new.v_normal, fr, fp, f_mem_new); %calculate Rayleighian vs Rayleighian of initial state
                 pred = alpha * quad;
                 if dE >= lsr.c * pred
                     P = P_new;
@@ -357,6 +365,19 @@ function velocity = map_data(geo, geo_pre, velocity_pre)
     end
     velocity = interpolate(geo_pre.F, face, uv, reshape(velocity_pre, [], 3));
     velocity = velocity(:);
+end
+
+function E = bie_slip_energy(P_vec, P0, dt, M, f_mem, slp_cache, gamy, v_area, Sd, Da)
+    if Da <= 0 || Sd <= 0
+        error('Updated BIE variational terms require positive p.Da and p.Sd.');
+    end
+
+    P = reshape(P_vec, [], 3);
+    u_mem = reshape((P_vec - P0)/dt, [], 3);
+    u_back = shearextensionflow(P, gamy);
+    u_dist = stokeslet_SLP_triangle(P, M, f_mem, slp_cache);
+    q = u_mem - u_back + u_dist;
+    E = (1/(Da*Sd)) * sum(v_area.*dot(q, q, 2));
 end
 
 % function E_out = lagrangian(P_, willmore_, lambda_, area_,P0_,p_,fr_,fp_,KTK_,DTD_) 

@@ -6,7 +6,7 @@ view_azi = 154; view_ele =21; alph = .9; %view_azi=-35;view_ele=-68;
 edge = 2.5;
 timetime=0;
 gamy=-1;
-Da = 0;
+Da = 1000;
 Sd = 1;
 rotate = true;
 zoom=false;
@@ -42,13 +42,16 @@ run_tag = strrep(run_tag, '-', 'm');
 name = "./data/" + run_tag + ".gif";
 directory = "./data/ms_batch_data/";
 delete(name)
+gif_frame_count = 0;
 size_x = 1000; size_y = 900;
 set(gcf, 'Position',  [200, 200, size_x, size_y], ...
     'Color', 'w', ...
     'InvertHardcopy', 'off')
 gif_delay = 1 / 14;
 gif_frame_path = "./data/.ms_plotter_frame.png";
-delete(gif_frame_path)
+if isfile(gif_frame_path)
+    delete(gif_frame_path)
+end
 
 %Determine initial face properties to track if the mesh effects the dynamics
 geoj = load(directory + run_tag + sprintf("/geo%d.mat",1));
@@ -61,9 +64,9 @@ area0 = geoj_Geom.area;
 folder = directory + run_tag; %change this to your actual path
 files = dir(fullfile(folder, 'geo*.mat'));
 tf = int32(length(files));
-ti = 1; ts = int32(ceil(tf/1000));
+ti = 1; ts = int32(max(1, ceil(double(tf)/1000)));
 % OVERRIDES
-ti=3;ts=80;
+
 
 
 % Static coloration
@@ -389,7 +392,7 @@ for n = ti:ts:tf
     frame = getframe(gcf);
     frame_rgb = frame2im(frame);
     [frame_ind, map] = rgb2ind(frame_rgb, 256);
-    if n == ti
+    if gif_frame_count == 0
         imwrite(frame_ind, map, name, 'gif', ...
             'LoopCount', inf, ...
             'DelayTime', gif_delay, ...
@@ -400,11 +403,35 @@ for n = ti:ts:tf
             'DelayTime', gif_delay, ...
             'DisposalMethod', 'restoreBG');
     end
+    gif_frame_count = gif_frame_count + 1;
     %disp((geoj_Geom.area - area0)/area0);
     %disp(geoj.p.dt)
 
 
 
+end
+
+%Rotation of final state
+if rotate
+    rspeed=0;
+    for n = 1:15
+        drawnow;
+        frame = getframe(gcf);
+        frame_rgb = frame2im(frame);
+        [frame_ind, map] = rgb2ind(frame_rgb, 256);
+        if gif_frame_count == 0
+            imwrite(frame_ind, map, name, 'gif', ...
+                'LoopCount', inf, ...
+                'DelayTime', gif_delay, ...
+                'DisposalMethod', 'restoreBG');
+        else
+            imwrite(frame_ind, map, name, 'gif', ...
+                'WriteMode', 'append', ...
+                'DelayTime', gif_delay, ...
+                'DisposalMethod', 'restoreBG');
+        end
+        gif_frame_count = gif_frame_count + 1;
+    end
 end
 
 function field_out = smooth_vertex_field(field_in, F, n_iters, blend)
@@ -437,19 +464,4 @@ end
 
 function F_out = geoj_M_safe(F_in)
     F_out = F_in;
-end
-
-%Rotation of final state
-if rotate
-    rspeed=0;
-    for n = 1:15
-        drawnow;
-        frame = getframe(gcf);
-        frame_rgb = frame2im(frame);
-        [frame_ind, map] = rgb2ind(frame_rgb, 256);
-        imwrite(frame_ind, map, name, 'gif', ...
-            'WriteMode', 'append', ...
-            'DelayTime', gif_delay, ...
-            'DisposalMethod', 'restoreBG');
-    end
 end

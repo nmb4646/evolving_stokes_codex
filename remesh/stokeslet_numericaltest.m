@@ -2,7 +2,8 @@ clear;clc;close all;
 
 %%% Testing the numerical implementation of the stokeslet operator
 
-n_vals = 3:17; dx = [];trans_error=[]; normal_error = []; rot_error=[]; comb_error=[]; lin_error=[]; cubenorm_error =[];
+
+n_vals = 3:20; dx = [];trans_error=[]; normal_error = []; rot_error=[]; comb_error=[]; lin_error=[]; quad_error=[]; cubenorm_error =[];
 for n = n_vals
     [P, M] = subdivided_sphere(n);%P = rfpza(P);
     N = length(P);
@@ -56,9 +57,16 @@ for n = n_vals
     u = stokeslet_SLP_triangle(P,M,f,slpcache);
     lin_error = [lin_error;max(vecnorm(u - v,2,2))/max(vecnorm(v,2,2))];
 
+    % quadratic field
+    f = P(:,1) .* P;
+    slpcache = stokeslet_SLP_triangle_setup(M);
+    u = stokeslet_SLP_triangle(P,M,f,slpcache);
+    v_quad = repmat([1/5, 0, 0], size(P,1), 1) + (1/15) * (P(:,1) .* P);
+    quad_error = [quad_error;max(vecnorm(u - v_quad,2,2))/max(vecnorm(v_quad,2,2))];
+
     % normal field on a cube
     
-    [P,M] = subdivided_weirdshape(n); geo=Geometry(M,P);
+    [P,M] = subdivided_cube(n); geo=Geometry(M,P);
 
     f = geo.v_normal;
     slpcache = stokeslet_SLP_triangle_setup(M);
@@ -66,6 +74,8 @@ for n = n_vals
 
     relerr = max(vecnorm(u, 2, 2));
     cubenorm_error = [cubenorm_error; relerr];
+
+
 
 
     
@@ -77,6 +87,7 @@ p_normal = polyfit(log(dx),log(normal_error),1);
 p_rot = polyfit(log(dx),log(rot_error),1);
 p_comb = polyfit(log(dx),log(comb_error),1);
 p_lin = polyfit(log(dx),log(lin_error),1);
+p_quad = polyfit(log(dx),log(quad_error),1);
 p_cube = polyfit(log(dx),log(cubenorm_error),1);
 
 % Second analytical test: rigid body normalational traction gives rigid body
@@ -88,11 +99,12 @@ quiver3(P(:,1),P(:,2),P(:,3),f(:,1),f(:,2),f(:,3))
 quiver3(P(:,1),P(:,2),P(:,3),u(:,1),u(:,2),u(:,3))
 
 figure;
-loglog(dx,trans_error,LineWidth=2,DisplayName="uniform force");hold on;
-loglog(dx,normal_error,LineWidth=2,DisplayName="normal force");
-loglog(dx,rot_error,LineWidth=2,DisplayName="rotational force");
+loglog(dx,trans_error,LineWidth=2,DisplayName="uniform force f = F");hold on;
+loglog(dx,normal_error,LineWidth=2,DisplayName="normal force f = x/R");
+loglog(dx,rot_error,LineWidth=2,DisplayName="rotational force f = \omega X x");
 loglog(dx,comb_error,LineWidth=2,DisplayName="rot+norm force");
 loglog(dx,lin_error,LineWidth=2,DisplayName="general force f = Ax");
+loglog(dx,quad_error,LineWidth=2,DisplayName="quadratic force f = x_1x");
 loglog(dx,cubenorm_error,LineWidth=2,DisplayName="normal force on cube");
 xlabel("dx",FontSize=17); ylabel("\epsilon",FontSize=25)
 set(gca,"YScale","log")
