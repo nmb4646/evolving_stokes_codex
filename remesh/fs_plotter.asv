@@ -5,10 +5,10 @@ close all; clc; clear;
 
 dt = 1e-1;
 k = 10000;
-Sd = 22;
+Sd = 19;
 Da = 1000;
 Gamma = 0;
-gamy = 20;
+gamy = 5;
 chi = 1e-4;
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e', Sd, Da, gamy);
 run_tag = strrep(run_tag, '+', 'p');
@@ -122,7 +122,7 @@ end
 if show_velocity
     velocity = reshape(geoj.velocity, [], 3);
     %velocity = -shear_flow(geoj.P,1);
-    %velocity = dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
+    %velocity = reshape(geoj.velocity, [], 3) - dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
     %velocity = reshape(geoj.velocity, [], 3) - dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
     velocity_ids = 1:velocity_stride:size(geoj.P, 1);
     qv = quiver3(ax, geoj.P(velocity_ids,1), geoj.P(velocity_ids,2), geoj.P(velocity_ids,3), ...
@@ -173,8 +173,7 @@ for frame_idx = 1:numel(plot_ids)
     if show_velocity
         velocity = reshape(geoj.velocity, [], 3);
         %velocity = -shear_flow(geoj.P,1);
-        %velocity = dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
-        %velocity = velocity - dot(velocity, geo.v_normal, 2) .* geo.v_normal;
+        velocity = velocity - dot(velocity, geo.v_normal, 2) .* geo.v_normal;
         velocity_ids = 1:velocity_stride:size(geoj.P, 1);
         set(qv, ...
             'XData', geoj.P(velocity_ids,1), ...

@@ -1,21 +1,21 @@
 close all; clc; clear;
 
-% Barebones plotter for fs_multi output.
+% Barebones plotter for gs_multi output.
 % Override run_tag/directory/name before running if needed.
 
 dt = 1e-1;
 k = 10000;
-Sd = 22;
-Da = 1000;
+Sd = 20;
+Da = 10;
 Gamma = 0;
-gamy = 20;
+gamy = 5;
 chi = 1e-4;
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e', Sd, Da, gamy);
 run_tag = strrep(run_tag, '+', 'p');
 run_tag = strrep(run_tag, '-', 'm');
 
 if ~exist('directory', 'var')
-    directory = "./data/fs_batch_data/";
+    directory = "./data/gs_batch_data/";
 end
 folder = directory + run_tag;
 name = directory + run_tag + ".gif";
@@ -24,18 +24,17 @@ fprintf("Writing %s\n", name);
 
 view_azi = -1;
 view_ele = 1;
-alph = .8;
+alph = 1;
 edge_color = [.3, .3, .3];
 gif_delay = 1 / 14;
 size_x = 1000;
 size_y = 900;
 plot_stride = 1;
-
 if ~exist('show_velocity', 'var')
-    show_velocity = true;
+    show_velocity = false;
 end
 if ~exist('velocity_stride', 'var')
-    velocity_stride = 1;
+    velocity_stride = 3;
 end
 if ~exist('velocity_scale', 'var')
     velocity_scale = 4;
@@ -45,9 +44,6 @@ if ~exist('velocity_color', 'var')
 end
 if ~exist('color_mode', 'var')
     color_mode = "curvature";
-end
-if ~exist('uniform_color', 'var')
-    uniform_color = [0.75, 0.78, 0.82];
 end
 
 files = dir(fullfile(folder, 'geo*.mat'));
@@ -75,15 +71,10 @@ plot_ids = unique(plot_ids, 'stable');
 
 geoj = load(fullfile(folder, sprintf("geo%d.mat", tf)));
 geo = Geometry(geoj.M, geoj.P);
-use_uniform_color = strcmp(string(color_mode), "uniform");
-if use_uniform_color
-    C = [];
-else
-    C = frame_color_data(geoj, geo, color_mode, gamy);
-    [color_min, color_max] = percentile_bounds(C, 2, 98);
-    if color_max <= color_min
-        color_max = color_min + eps;
-    end
+C = frame_color_data(geoj, geo, color_mode, gamy);
+[color_min, color_max] = percentile_bounds(C, 2, 98);
+if color_max <= color_min
+    color_max = color_min + eps;
 end
 edge = 1.08 * max(abs(geoj.P), [], "all");
 if edge == 0
@@ -99,37 +90,25 @@ ax = axes(fig);
 set(ax, 'Units', 'normalized', 'Position', [0.03, 0.03, 0.94, 0.94], ...
     'ActivePositionProperty', 'position', 'Color', [.9, .9, .9]);
 colormap(ax, turbo(256));
-if ~use_uniform_color
-    clim(ax, [color_min, color_max]);
-end
+clim(ax, [color_min, color_max]);
 hold(ax, 'on');
 
-if use_uniform_color
-    h = trisurf(geoj.M, geoj.P(:,1), geoj.P(:,2), geoj.P(:,3), ...
-        'Parent', ax, ...
-        'FaceColor', uniform_color, ...
-        'EdgeColor', edge_color, ...
-        'FaceAlpha', alph);
-else
-    h = trisurf(geoj.M, geoj.P(:,1), geoj.P(:,2), geoj.P(:,3), ...
-        'Parent', ax, ...
-        'FaceColor', 'interp', ...
-        'FaceVertexCData', C, ...
-        'CDataMapping', 'scaled', ...
-        'EdgeColor', edge_color, ...
-        'FaceAlpha', alph);
-end
+h = trisurf(geoj.M, geoj.P(:,1), geoj.P(:,2), geoj.P(:,3), ...
+    'Parent', ax, ...
+    'FaceColor', 'interp', ...
+    'FaceVertexCData', C, ...
+    'CDataMapping', 'scaled', ...
+    'EdgeColor', edge_color, ...
+    'FaceAlpha', alph);
 if show_velocity
     velocity = reshape(geoj.velocity, [], 3);
     %velocity = -shear_flow(geoj.P,1);
-    %velocity = dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
     %velocity = reshape(geoj.velocity, [], 3) - dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
-    velocity_ids = 1:velocity_stride:size(geoj.P, 1);
+    %velocity_ids = 1:velocity_stride:size(geoj.P, 1);
     qv = quiver3(ax, geoj.P(velocity_ids,1), geoj.P(velocity_ids,2), geoj.P(velocity_ids,3), ...
         velocity(velocity_ids,1), velocity(velocity_ids,2), velocity(velocity_ids,3), ...
-        velocity_scale, velocity_color);
-    %"off",velocity_color);
-        
+"off",velocity_color)
+        %velocity_scale, velocity_color);
 else
     qv = [];
     velocity_ids = [];
@@ -150,31 +129,22 @@ gif_frame_count = 0;
 
 %%% OVERRIDE
 
-plot_ids = 1:10:tf;
+plot_ids = 1;
 
 for frame_idx = 1:numel(plot_ids)
     n = plot_ids(frame_idx);
     geoj = load(fullfile(folder, sprintf("geo%d.mat", n)));
     geo = Geometry(geoj.M, geoj.P);
     disp((4/3*pi - geo.volume)/(4/3*pi));
-    if ~use_uniform_color
-        C = frame_color_data(geoj, geo, color_mode, gamy);
-    end
+    C = frame_color_data(geoj, geo, color_mode, gamy);
 
-    if use_uniform_color
-        set(h, 'Faces', geoj.M, ...
-            'Vertices', geoj.P, ...
-            'FaceColor', uniform_color);
-    else
-        set(h, 'Faces', geoj.M, ...
-            'Vertices', geoj.P, ...
-            'FaceVertexCData', C);
-    end
+    set(h, 'Faces', geoj.M, ...
+        'Vertices', geoj.P, ...
+        'FaceVertexCData', C);
     if show_velocity
         velocity = reshape(geoj.velocity, [], 3);
         %velocity = -shear_flow(geoj.P,1);
-        %velocity = dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
-        %velocity = velocity - dot(velocity, geo.v_normal, 2) .* geo.v_normal;
+        %velocity=-(reshape(geoj.velocity, [], 3) - dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal);
         velocity_ids = 1:velocity_stride:size(geoj.P, 1);
         set(qv, ...
             'XData', geoj.P(velocity_ids,1), ...
@@ -184,9 +154,7 @@ for frame_idx = 1:numel(plot_ids)
             'VData', velocity(velocity_ids,2), ...
             'WData', velocity(velocity_ids,3));
     end
-    if ~use_uniform_color
-        colorbar;
-    end
+    colorbar;
     drawnow;
 
     frame = getframe(fig);
@@ -226,8 +194,6 @@ end
 
 function C = frame_color_data(geoj, geo, color_mode, ~)
     switch string(color_mode)
-        case "uniform"
-            C = [];
         case "curvature"
             C = geo.v_mean_curvature ./ geo.v_area;
         case {"permeation", "permeation_velocity", "permeation_norm"}

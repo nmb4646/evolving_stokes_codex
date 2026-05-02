@@ -1,13 +1,13 @@
-% Nondimensional force-surface relaxation solver.
+% Nondimensional coupled Newton-Krylov force-surface solver.
 %
 % Expected caller variables:
 %   p       parameter struct
 %   dir     output directory ending in '/'
 %   verbose logical/scalar
 %
-% This is the first multifield force update:
-%   P, lambda are advanced by the scalar surface relaxation step with f fixed.
-%   f is then updated from the permeable BIE residual.
+% This is the coupled multifield update:
+%   P, f, and lambda are solved simultaneously with a matrix-free
+%   Newton-Krylov iteration on the force-balance, BIE, and area residuals.
 
 
 
@@ -55,6 +55,27 @@ if ~isfield(p, 'gamy')
 end
 if ~isfield(p, 'chi')
     p.chi = 0.1;
+end
+if ~isfield(p, 'nk_tol')
+    p.nk_tol = 1e-3;
+end
+if ~isfield(p, 'nk_gmres_tol')
+    p.nk_gmres_tol = 1e-2;
+end
+if ~isfield(p, 'nk_gmres_restart')
+    p.nk_gmres_restart = 50;
+end
+if ~isfield(p, 'nk_gmres_maxit')
+    p.nk_gmres_maxit = 20;
+end
+if ~isfield(p, 'nk_fd_relstep')
+    p.nk_fd_relstep = sqrt(eps);
+end
+if ~isfield(p, 'nk_max_step')
+    p.nk_max_step = 1;
+end
+if ~isfield(p, 'nk_area_weight')
+    p.nk_area_weight = 1;
 end
 
 start = p.start;
@@ -157,7 +178,10 @@ else
     end
     p.dt = dt_override;
     p.remesh_size = remesh_size;
-    override_fields = ["Sd", "Da", "Gamma", "gamy", "chi", "tol_b", "tol_c", "tol_d", "max_iter", "h", "eta"];
+    override_fields = ["Sd", "Da", "Gamma", "gamy", "chi", ...
+        "nk_tol", "nk_gmres_tol", "nk_gmres_restart", "nk_gmres_maxit", ...
+        "nk_fd_relstep", "nk_max_step", "nk_area_weight", ...
+        "tol_b", "tol_c", "tol_d", "max_iter", "h", "eta"];
     for override_idx = 1:numel(override_fields)
         field = override_fields(override_idx);
         if isfield(p_input, field)
@@ -174,6 +198,11 @@ else
     lsr.max_iter = 20;
     lsr.f_tau = 0.5;
     lsr.f_max_iter = 12;
+    
+    p.f_gmres_tol = 1e-4;
+    p.f_gmres_restart = 50;
+    p.f_gmres_maxit = 50;
+    p.f_relax = 0.5;
 
     if ~isfield(o, 'tol_b')
         o.tol_b = o.tol_f;
@@ -214,8 +243,8 @@ else
     end
 
     %%% OVERRRIDES
-    o.tol_b = .06;
-    o.tol_c = .03;
+    o.tol_b = .05;
+    o.tol_c = .05;
     o.tol_d = .01;
 
     %.h = o.h*3;
@@ -232,142 +261,89 @@ for t = (start + 1):p.T
 
     [~, ~, ~, ~, KTK, DTD] = geo.evolving_operators();
     P0 = P(:);
-    lambda_restart = lambda;
-    f_restart = f;
-
-    mass0 = spdiags(geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
-    mass0_inv = spdiags(1 ./ geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
-    bih = geo.lap * mass0_inv * geo.lap;
-    bih = blkdiag(bih, bih, bih);
-    Hess = 2 * (KTK + p.k * DTD) ...
-        + 0.5 * p.dt * bih ...
-        + 1e-3 * r.edge_length^(-2) * blkdiag(mass0, mass0, mass0);
-
-    lagrangian = @(P_, willmore_, lambda_, area_) ...
-        (P_ - P0)' * (KTK + p.k * DTD) * (P_ - P0) ...
-        + p.dt * willmore_ ...
-        - p.dt * (area_ - p.area0) * lambda_;
 
     P(:) = P0 + p.dt * velocity;
     geo = Geometry(M, P);
 
+    z = pack_state(P, f, lambda);
+    [~, initial_parts] = gs_residual(z, P0, M, KTK, DTD, slp_cache, p, []);
+    scales = gs_residual_scales(initial_parts, p);
+
+    j = 0;
     eps_b = Inf;
     eps_c = Inf;
     eps_d = Inf;
-    eps_b_prev = Inf;
-    eps_b_rise_count = 0;
-    j = 0;
-    alpha_mem = o.h;
+    phi = Inf;
+    while ((eps_b > o.tol_b) || (eps_c > o.tol_c) || (eps_d > o.tol_d) || (phi > p.nk_tol)) && (j < o.max_iter)
+        [R, parts] = gs_residual(z, P0, M, KTK, DTD, slp_cache, p, scales);
+        phi = norm(R) / sqrt(numel(R));
+        eps_b = residual_rms(parts.r2) / scales.f;
+        eps_c = residual_rms(parts.r1) / scales.u;
+        eps_d = abs(parts.r3) / scales.area;
 
-    while ((eps_b > o.tol_b) || (eps_c > o.tol_c) || (eps_d > o.tol_d)) && (j < o.max_iter)
-        f_nodal = traction_to_nodal(f, geo);
-        E = lagrangian(P(:), geo.willmore_energy(1), lambda, geo.area) ...
-            - p.dt * (P(:) - P0)' * f_nodal(:);
-
-        fb = geo.bending_force(1);
-        twoHn = geo.lap * P;
-        u = reshape((P(:) - P0) / p.dt, size(P));
-        fv = reshape(-2 * (KTK + p.k * DTD) * u(:), size(P));
-        fs = reshape(lambda * twoHn, size(P));
-        f_mem = fv + fb + fs;
-        b = p.dt * (-f_nodal(:) + f_mem(:));
-
-        dP = Hess \ b;
-
-        quad = dP' * b;
-        if quad <= 0
-            error('quad = %0.4g should be positive definite', quad);
+        if phi <= p.nk_tol && eps_b <= o.tol_b && eps_c <= o.tol_c && eps_d <= o.tol_d
+            break
         end
-        eps_b_step_raw = sqrt(quad);
-        u_rms = norm(u(:)) / sqrt(numel(u));
-        eps_b = eps_b_step_raw / max(u_rms, 1e-14);
+
+        Jv = @(v) gs_jacobian_vector(v, z, R, P0, M, KTK, DTD, slp_cache, p, scales);
+        [dz, gmres_flag, gmres_relres, gmres_iter] = gmres(Jv, -R, ...
+            p.nk_gmres_restart, p.nk_gmres_tol, p.nk_gmres_maxit);
+
+        if gmres_flag > 1 || any(~isfinite(dz))
+            warning("Newton-Krylov GMRES failed at t = %d, j = %d with flag = %d, relres = %0.4g.", ...
+                t, j, gmres_flag, gmres_relres);
+            break;
+        end
+
+        dz_norm = norm(dz);
+        if dz_norm > p.nk_max_step * max(1, norm(z))
+            dz = dz * (p.nk_max_step * max(1, norm(z)) / dz_norm);
+        end
 
         accepted = false;
-        alpha = min(alpha_mem, o.h / max(1, eps_b_step_raw));
+        alpha = 1;
         for ls_iter = 1:lsr.max_iter
-            P_new = reshape(P(:) + alpha * dP, [], 3);
-            geo_new = Geometry(M, P_new);
-            f_nodal_new = traction_to_nodal(f, geo_new);
-            E_new = lagrangian(P_new(:), geo_new.willmore_energy(1), lambda, geo_new.area) ...
-                + p.dt * (P_new(:) - P0)' * f_nodal_new(:);
-            dE = E - E_new;
-            pred = alpha * quad;
-            if dE >= lsr.c * pred
-                P = P_new;
-                geo = geo_new;
+            z_trial = z + alpha * dz;
+            [R_trial, parts_trial] = gs_residual(z_trial, P0, M, KTK, DTD, slp_cache, p, scales);
+            phi_trial = norm(R_trial) / sqrt(numel(R_trial));
+            if phi_trial <= (1 - lsr.c * alpha) * phi
+                z = z_trial;
+                parts = parts_trial;
+                phi = phi_trial;
                 accepted = true;
-                alpha_mem = min(alpha / lsr.tau, o.h);
-                break;
+                break
             end
             alpha = lsr.tau * alpha;
         end
+
         if ~accepted
-            error("backtracking fails");
+            warning("Newton-Krylov line search failed at t = %d, j = %d.", t, j);
+            break;
         end
 
-        u = reshape((P(:) - P0) / p.dt, size(P));
-        u_background = shear_flow(P, p.gamy);
-
-        %%% Gradient descent on f
-        c = bie_residual(P, M, f, geo, u, u_background, slp_cache, p);
-        f = f - p.chi * c;
-        eps_c_raw = norm(c(:)) / (max(p.Sd*p.Da,1)*sqrt(numel(c)));
-        u_rms = norm(u(:)) / sqrt(numel(u));
-        eps_c = eps_c_raw / max(u_rms, 1e-14);
-
-
-
-
-
-
-        darea = geo.area - p.area0;
-        eps_d = abs(darea) / p.area0;
-        lambda = lambda - o.eta * darea;
-        eps_b_step = eps_b;
-        eps_b = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
+        eps_b = residual_rms(parts.r2) / scales.f;
+        eps_c = residual_rms(parts.r1) / scales.u;
+        eps_d = abs(parts.r3) / scales.area;
 
         if verbose
-            fprintf("t = %d, j = %d, ls_iter = %d, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g, darea = %0.4g \n", ...
-                t, j, ls_iter, eps_b, eps_c, eps_d, darea);
+            fprintf("t = %d, j = %d, NK phi = %0.4g, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g, GMRES flag = %d, relres = %0.4g, iter = [%d %d], alpha = %0.4g\n", ...
+                t, j, phi, eps_b, eps_c, eps_d, gmres_flag, gmres_relres, gmres_iter(1), gmres_iter(2), alpha);
         end
-
-        if eps_b > eps_b_prev
-            eps_b_rise_count = eps_b_rise_count + 1;
-            if eps_b_rise_count > 1000
-                if ~supress_outputs
-                    fprintf("eps_b monotonically increasing; halving o.h and restarting t = %d\n", t);
-                end
-                o.h = 0.5 * o.h;
-                lambda = lambda_restart;
-                f = f_restart;
-                P = reshape(P0 + p.dt * velocity, [], 3);
-                geo = Geometry(M, P);
-                eps_b = Inf;
-                eps_c = Inf;
-                eps_d = Inf;
-                eps_b_prev = Inf;
-                eps_b_rise_count = 0;
-                j = 0;
-                alpha_mem = o.h;
-                continue
-            end
-        else
-            eps_b_rise_count = 0;
-        end
-        eps_b_prev = eps_b;
 
         j = j + 1;
     end
 
+    [P, f, lambda] = unpack_state(z, size(P, 1));
+    geo = Geometry(M, P);
+
     if j >= o.max_iter
-        warning("Terminating at t = %d because j reached o.max_iter = %d. eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g", ...
-            t, o.max_iter, eps_b, eps_c, eps_d);
+        warning("Terminating at t = %d because j reached o.max_iter = %d. NK phi = %0.4g, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g", ...
+            t, o.max_iter, phi, eps_b, eps_c, eps_d);
         break;
     end
 
     p.total_time = p.total_time + toc;
-    %[P, velocity] = rm_rigid(P, (P(:) - P0) / p.dt, geo.v_area);
-    [P, velocity] = rm_rigid_patched(P, (P(:) - P0) / p.dt, geo.v_area,"translation");
+    [P, velocity] = rm_rigid(P, (P(:) - P0) / p.dt, geo.v_area);
     geo = Geometry(M, P);
 
     if hasRemesher && 0%deformation_criterion(geo)
@@ -407,6 +383,76 @@ function [velocity, f] = map_data(geo, geo_pre, velocity_pre, f_pre)
     f = interpolate(geo_pre.F, face, uv, f_pre);
 end
 
+function z = pack_state(P, f, lambda)
+    z = [P(:); f(:); lambda];
+end
+
+function [P, f, lambda] = unpack_state(z, n_v)
+    n_p = 3 * n_v;
+    P = reshape(z(1:n_p), [], 3);
+    f = reshape(z((n_p + 1):(2 * n_p)), [], 3);
+    lambda = z(end);
+end
+
+function [R, parts] = gs_residual(z, P0, M, KTK, DTD, slp_cache, p, scales)
+    n_v = size(P0, 1) / 3;
+    [P, f, lambda] = unpack_state(z, n_v);
+    geo = Geometry(M, P);
+
+    u = reshape((P(:) - P0) / p.dt, size(P));
+    u_background = shear_flow(P, p.gamy);
+    r1 = bie_residual(P, M, f, geo, u, u_background, slp_cache, p);
+
+    fb = geo.bending_force(1);
+    twoHn = geo.lap * P;
+    fv = reshape(-2 * (KTK + p.k * DTD) * u(:), size(P));
+    fs = reshape(lambda * twoHn, size(P));
+    r2 = f + nodal_to_traction(fv + fb + fs, geo);
+
+    r3 = geo.area - p.area0;
+
+    parts.P = P;
+    parts.f = f;
+    parts.lambda = lambda;
+    parts.geo = geo;
+    parts.u = u;
+    parts.r1 = r1;
+    parts.r2 = r2;
+    parts.r3 = r3;
+
+    if isempty(scales)
+        R = [];
+        return
+    end
+
+    R = [
+        r1(:) / scales.u;
+        r2(:) / scales.f;
+        p.nk_area_weight * r3 / scales.area
+    ];
+end
+
+function scales = gs_residual_scales(parts, p)
+    scales.u = max([residual_rms(parts.r1), residual_rms(parts.u), abs(p.Gamma), 1e-8]);
+    scales.f = max([residual_rms(parts.r2), residual_rms(parts.f), 1e-8]);
+    scales.area = max(abs(p.area0), 1e-8);
+end
+
+function Jv = gs_jacobian_vector(v, z, R, P0, M, KTK, DTD, slp_cache, p, scales)
+    v_norm = norm(v);
+    if v_norm == 0
+        Jv = zeros(size(R));
+        return
+    end
+    fd_step = p.nk_fd_relstep * max(1, norm(z)) / v_norm;
+    R_perturbed = gs_residual(z + fd_step * v, P0, M, KTK, DTD, slp_cache, p, scales);
+    Jv = (R_perturbed - R) / fd_step;
+end
+
+function out = residual_rms(x)
+    out = norm(x(:)) / sqrt(numel(x));
+end
+
 function c = bie_residual(P, M, f, geo, u, u_background, slp_cache, p)
     slpout = stokeslet_SLP_triangle(P, M, f, slp_cache);
     normal_slip = p.Gamma + dot(f, geo.v_normal, 2);
@@ -423,7 +469,7 @@ function eps_b = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p)
     fv = reshape(-2 * (KTK + p.k * DTD) * u(:), size(P));
     fs = reshape(lambda * twoHn, size(P));
     f_mem = fv + fb + fs;
-    res = f_nodal - f_mem;
+    res = f_nodal + f_mem;
     res_rms = norm(res(:)) / sqrt(numel(res));
     u_rms = norm(u(:)) / sqrt(numel(u));
     eps_b = res_rms / max(u_rms, 1e-14);
@@ -436,4 +482,3 @@ end
 function traction = nodal_to_traction(nodal, geo)
     traction = nodal ./ geo.v_area;
 end
-

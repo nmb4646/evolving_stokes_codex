@@ -135,7 +135,7 @@ if start == 0
     twoHn0 = geo.lap * P;
     fv0 = reshape(-2 * (KTK0 + p.k * DTD0) * velocity, size(P));
     fs0 = reshape(lambda * twoHn0, size(P));
-    f = -nodal_to_traction(fv0 + fb + fs0, geo);
+    f = nodal_to_traction(fv0 + fb + fs0, geo);
     slp_cache = stokeslet_SLP_triangle_setup(M);
 
     save(dir + "geo0.mat", "M", "P", "velocity", "lambda", "f", "fb", "p", "o", "r", "lsr");
@@ -270,7 +270,7 @@ for t = (start + 1):p.T
         fv = reshape(-2 * (KTK + p.k * DTD) * u(:), size(P));
         fs = reshape(lambda * twoHn, size(P));
         f_mem = fv + fb + fs;
-        b = p.dt * (-f_nodal(:) + f_mem(:));
+        b = p.dt * (f_nodal(:) + f_mem(:));
 
         dP = Hess \ b;
 
@@ -289,7 +289,7 @@ for t = (start + 1):p.T
             geo_new = Geometry(M, P_new);
             f_nodal_new = traction_to_nodal(f, geo_new);
             E_new = lagrangian(P_new(:), geo_new.willmore_energy(1), lambda, geo_new.area) ...
-                + p.dt * (P_new(:) - P0)' * f_nodal_new(:);
+                - p.dt * (P_new(:) - P0)' * f_nodal_new(:);
             dE = E - E_new;
             pred = alpha * quad;
             if dE >= lsr.c * pred
@@ -310,7 +310,7 @@ for t = (start + 1):p.T
 
         %%% Gradient descent on f
         c = bie_residual(P, M, f, geo, u, u_background, slp_cache, p);
-        f = f - p.chi * c;
+        f = f + p.chi * c;
         eps_c_raw = norm(c(:)) / (max(p.Sd*p.Da,1)*sqrt(numel(c)));
         u_rms = norm(u(:)) / sqrt(numel(u));
         eps_c = eps_c_raw / max(u_rms, 1e-14);
@@ -367,7 +367,7 @@ for t = (start + 1):p.T
 
     p.total_time = p.total_time + toc;
     %[P, velocity] = rm_rigid(P, (P(:) - P0) / p.dt, geo.v_area);
-    [P, velocity] = rm_rigid_patched(P, (P(:) - P0) / p.dt, geo.v_area,"translation");
+    velocity = P
     geo = Geometry(M, P);
 
     if hasRemesher && 0%deformation_criterion(geo)
@@ -423,7 +423,7 @@ function eps_b = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p)
     fv = reshape(-2 * (KTK + p.k * DTD) * u(:), size(P));
     fs = reshape(lambda * twoHn, size(P));
     f_mem = fv + fb + fs;
-    res = f_nodal - f_mem;
+    res = f_nodal + f_mem;
     res_rms = norm(res(:)) / sqrt(numel(res));
     u_rms = norm(u(:)) / sqrt(numel(u));
     eps_b = res_rms / max(u_rms, 1e-14);
