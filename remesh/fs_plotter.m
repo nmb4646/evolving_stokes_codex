@@ -5,10 +5,10 @@ close all; clc; clear;
 
 dt = 1e-1;
 k = 10000;
-Sd = 22;
+Sd = 23.5;
 Da = 1000;
-Gamma = 0;
-gamy = 20;
+Gamma = .1;
+gamy = 0;
 chi = 1e-4;
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e', Sd, Da, gamy);
 run_tag = strrep(run_tag, '+', 'p');
@@ -22,17 +22,20 @@ name = directory + run_tag + ".gif";
 fprintf("Plotting %s\n", folder);
 fprintf("Writing %s\n", name);
 
-view_azi = -1;
+view_azi = 179;
 view_ele = 1;
-alph = .8;
+view_rotation_angle_deg = 90;
+view_rotation_axis = [0, 1, 0];
+view_rotation_center = [0, 0, 0];
+alph = .9;
 edge_color = [.3, .3, .3];
 gif_delay = 1 / 14;
 size_x = 1000;
 size_y = 900;
-plot_stride = 1;
+plot_stride = 80;
 
 if ~exist('show_velocity', 'var')
-    show_velocity = true;
+    show_velocity = false;
 end
 if ~exist('velocity_stride', 'var')
     velocity_stride = 1;
@@ -75,6 +78,8 @@ plot_ids = unique(plot_ids, 'stable');
 
 geoj = load(fullfile(folder, sprintf("geo%d.mat", tf)));
 geo = Geometry(geoj.M, geoj.P);
+view_rotation = make_view_rotation(view_rotation_angle_deg, view_rotation_axis, view_rotation_center);
+P_view = apply_view_rotation(geoj.P, view_rotation);
 use_uniform_color = strcmp(string(color_mode), "uniform");
 if use_uniform_color
     C = [];
@@ -85,7 +90,7 @@ else
         color_max = color_min + eps;
     end
 end
-edge = 1.08 * max(abs(geoj.P), [], "all");
+edge = 1.08 * max(abs(P_view), [], "all");
 if edge == 0
     edge = 1;
 end
@@ -105,13 +110,13 @@ end
 hold(ax, 'on');
 
 if use_uniform_color
-    h = trisurf(geoj.M, geoj.P(:,1), geoj.P(:,2), geoj.P(:,3), ...
+    h = trisurf(geoj.M, P_view(:,1), P_view(:,2), P_view(:,3), ...
         'Parent', ax, ...
         'FaceColor', uniform_color, ...
         'EdgeColor', edge_color, ...
         'FaceAlpha', alph);
 else
-    h = trisurf(geoj.M, geoj.P(:,1), geoj.P(:,2), geoj.P(:,3), ...
+    h = trisurf(geoj.M, P_view(:,1), P_view(:,2), P_view(:,3), ...
         'Parent', ax, ...
         'FaceColor', 'interp', ...
         'FaceVertexCData', C, ...
@@ -121,12 +126,13 @@ else
 end
 if show_velocity
     velocity = reshape(geoj.velocity, [], 3);
+    velocity_view = rotate_view_vectors(velocity, view_rotation);
     %velocity = -shear_flow(geoj.P,1);
     %velocity = dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
     %velocity = reshape(geoj.velocity, [], 3) - dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
     velocity_ids = 1:velocity_stride:size(geoj.P, 1);
-    qv = quiver3(ax, geoj.P(velocity_ids,1), geoj.P(velocity_ids,2), geoj.P(velocity_ids,3), ...
-        velocity(velocity_ids,1), velocity(velocity_ids,2), velocity(velocity_ids,3), ...
+    qv = quiver3(ax, P_view(velocity_ids,1), P_view(velocity_ids,2), P_view(velocity_ids,3), ...
+        velocity_view(velocity_ids,1), velocity_view(velocity_ids,2), velocity_view(velocity_ids,3), ...
         velocity_scale, velocity_color);
     %"off",velocity_color);
         
@@ -140,7 +146,7 @@ axis(ax, 'manual');
 axis(ax, 'equal');
 axis(ax, 'vis3d');
 axis(ax, 'off');
-pbaspect(ax, [1 1 1]);
+pbaspect(ax, [1 2 1]);
 xlim(ax, [-edge, edge]);
 ylim(ax, [-edge, edge]);
 zlim(ax, [-edge, edge]);
@@ -150,42 +156,44 @@ gif_frame_count = 0;
 
 %%% OVERRIDE
 
-plot_ids = 1:10:tf;
+plot_ids = tf-100:10:tf;
 
 for frame_idx = 1:numel(plot_ids)
     n = plot_ids(frame_idx);
     geoj = load(fullfile(folder, sprintf("geo%d.mat", n)));
     geo = Geometry(geoj.M, geoj.P);
-    disp((4/3*pi - geo.volume)/(4/3*pi));
+    P_view = apply_view_rotation(geoj.P, view_rotation);
+    disp((geo.volume - 4/3*pi)/(4/3*pi));
     if ~use_uniform_color
         C = frame_color_data(geoj, geo, color_mode, gamy);
     end
 
     if use_uniform_color
         set(h, 'Faces', geoj.M, ...
-            'Vertices', geoj.P, ...
+            'Vertices', P_view, ...
             'FaceColor', uniform_color);
     else
         set(h, 'Faces', geoj.M, ...
-            'Vertices', geoj.P, ...
+            'Vertices', P_view, ...
             'FaceVertexCData', C);
     end
     if show_velocity
         velocity = reshape(geoj.velocity, [], 3);
+        velocity_view = rotate_view_vectors(velocity, view_rotation);
         %velocity = -shear_flow(geoj.P,1);
         %velocity = dot(reshape(geoj.velocity, [], 3),geo.v_normal,2).*geo.v_normal;
         %velocity = velocity - dot(velocity, geo.v_normal, 2) .* geo.v_normal;
         velocity_ids = 1:velocity_stride:size(geoj.P, 1);
         set(qv, ...
-            'XData', geoj.P(velocity_ids,1), ...
-            'YData', geoj.P(velocity_ids,2), ...
-            'ZData', geoj.P(velocity_ids,3), ...
-            'UData', velocity(velocity_ids,1), ...
-            'VData', velocity(velocity_ids,2), ...
-            'WData', velocity(velocity_ids,3));
+            'XData', P_view(velocity_ids,1), ...
+            'YData', P_view(velocity_ids,2), ...
+            'ZData', P_view(velocity_ids,3), ...
+            'UData', velocity_view(velocity_ids,1), ...
+            'VData', velocity_view(velocity_ids,2), ...
+            'WData', velocity_view(velocity_ids,3));
     end
     if ~use_uniform_color
-        colorbar;
+        colorbar;%clim([0 2])
     end
     drawnow;
 
@@ -222,6 +230,56 @@ function [lo, hi] = percentile_bounds(x, lo_pct, hi_pct)
     hi_idx = max(1, min(n, round(1 + (n - 1) * hi_pct / 100)));
     lo = x(lo_idx);
     hi = x(hi_idx);
+end
+
+function view_rotation = make_view_rotation(angle_deg, axis, center)
+    if nargin < 1 || isempty(angle_deg)
+        angle_deg = 0;
+    end
+    if nargin < 2 || isempty(axis)
+        axis = [0, 0, 1];
+    end
+    if nargin < 3 || isempty(center)
+        center = [0, 0, 0];
+    end
+
+    axis = parse_rotation_axis(axis);
+    theta = deg2rad(angle_deg);
+    K = [0, -axis(3), axis(2); ...
+         axis(3), 0, -axis(1); ...
+         -axis(2), axis(1), 0];
+    R = eye(3) + sin(theta) * K + (1 - cos(theta)) * (K * K);
+
+    view_rotation.R = R;
+    view_rotation.center = center(:).';
+end
+
+function axis = parse_rotation_axis(axis)
+    if isstring(axis) || ischar(axis)
+        switch lower(string(axis))
+            case "x"
+                axis = [1, 0, 0];
+            case "y"
+                axis = [0, 1, 0];
+            case "z"
+                axis = [0, 0, 1];
+            otherwise
+                error("Unknown view_rotation_axis '%s'. Use 'x', 'y', 'z', or a 1x3 vector.", axis);
+        end
+    end
+    axis = double(axis(:).');
+    if numel(axis) ~= 3 || any(~isfinite(axis)) || norm(axis) == 0
+        error("view_rotation_axis must be 'x', 'y', 'z', or a finite nonzero 1x3 vector.");
+    end
+    axis = axis / norm(axis);
+end
+
+function P_view = apply_view_rotation(P, view_rotation)
+    P_view = (P - view_rotation.center) * view_rotation.R.' + view_rotation.center;
+end
+
+function V_view = rotate_view_vectors(V, view_rotation)
+    V_view = V * view_rotation.R.';
 end
 
 function C = frame_color_data(geoj, geo, color_mode, ~)

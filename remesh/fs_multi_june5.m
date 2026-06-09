@@ -93,11 +93,11 @@ if start == 0
 
     p.area0 = geo.area;
 
-    o.h = 1;
-    o.eta = 100;
-    o.tol_b = .0000001;
-    o.tol_c = .0000001;
-    o.tol_d = .0000001;
+    o.h = .00005;
+    o.eta = 1;
+    o.tol_b = .01;
+    o.tol_c = .01;
+    o.tol_d = .01;
     o.tol_f = o.tol_b;
     o.max_iter = 10000;
     if isfield(p, 'tol_b')
@@ -214,26 +214,30 @@ else
     end
 
     %%% OVERRRIDES
-    o.tol_b = .06;
-    o.tol_c = .03;
-    o.tol_d = .01;
+    % o.tol_b = .06;
+    o.tol_c = .04;
+    % o.tol_d = .01;
 
     %.h = o.h*3;
     %o.eta = o.eta*.5;
-    
-
-
-
-
+   
 end
 
 for t = (start + 1):p.T
     tic;
-
+    
     [~, ~, ~, ~, KTK, DTD] = geo.evolving_operators();
     P0 = P(:);
+    u_background = shear_flow(P, p.gamy); ls_iter=1;
+
     lambda_restart = lambda;
     f_restart = f;
+    
+    % Forming block matrix operators on P0
+    S = stokeslet_SLP_triangle_matrix(P, M, slp_cache);
+
+    u_background = shear_flow(P, p.gamy);
+
 
     mass0 = spdiags(geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
     mass0_inv = spdiags(1 ./ geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
@@ -243,22 +247,18 @@ for t = (start + 1):p.T
         + 0.5 * p.dt * bih ...
         + 1e-3 * r.edge_length^(-2) * blkdiag(mass0, mass0, mass0);
 
+    disp("cond(Hess) = " + condest(Hess));
+    disp("cond(S) =    " + condest(S));
 
-
-    lagrangian = @(P_, willmore_, lambda_, area_, f_nodal_) ...
-        (P_ - P0)' * (KTK + p.k * DTD) * (P_ - P0) ...
-        + p.dt * willmore_ ...
-        - p.dt * (area_ - p.area0) * lambda_...
-        - p.dt * f_nodal_(:)' * (P_ - P0);
-
-    % Since the lagrangian is currently only used for the P-wise linesearch i
-    % won't include the final three terms of the rayleighian which are only
-    % dependent on f
-
-
-    S = stokeslet_SLP_triangle_matrix(P, M, slp_cache);
-    N = normal_projection_matrix(geo.v_normal);
-    NN = blkdiag(mass0, mass0, mass0) * N;
+    
+    % 
+    % lagrangian = @(P_, f_, willmore_, lambda_, area_,vol_) ...
+    %     (P_ - P0)' * (KTK + p.k * DTD) * (P_ - P0) ...
+    %     + p.dt * willmore_ ...
+    %     - p.dt * (area_ - p.area0) * lambda_+...
+    %     - p.dt * (P_ -P0)'*f_(:);%+...
+    %     %+ p.dt^2 * dot(f_,u_background(geo)-Sd*(f_))...
+    %     %+ p.dt^2 * Sd*Da*dot((Gamma - f),(Gamma - f_),2);
 
     P(:) = P0 + p.dt * velocity;
     geo = Geometry(M, P);
@@ -272,107 +272,34 @@ for t = (start + 1):p.T
     alpha_mem = o.h;
 
     while ((eps_b > o.tol_b) || (eps_c > o.tol_c) || (eps_d > o.tol_d)) && (j < o.max_iter)
+       
+        %f=0*f;
         
         f_nodal = traction_to_nodal(f, geo);
-        E = lagrangian(P(:), geo.willmore_energy(1), lambda, geo.area, f_nodal);
 
-        fb = geo.bending_force(1);
-        twoHn = geo.lap * P;
+        % twoHn = geo.lap * P;
         u = reshape((P(:) - P0) / p.dt, size(P));
-        fv = reshape(-2 * (KTK + p.k * DTD) * u(:), size(P));
-        fs = reshape(lambda * twoHn, size(P));
-        f_mem = fv + fb + fs;
-        b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
-        b_vec = b(:);
-        rhs = -b_vec;
 
-        dP = Hess \ rhs;
-
-        quad = dP' * rhs;
-        if quad <= 0
-            error('quad = %0.4g should be positive definite', quad);
-        end
-        eps_b_step_raw = sqrt(quad);
-        u_rms = norm(u(:)) / sqrt(numel(u));
-        eps_b = eps_b_step_raw / max(u_rms, 1e-14);
-
-        accepted = false;
-        alpha = min(alpha_mem, o.h / max(1, eps_b_step_raw));
-        for ls_iter = 1:lsr.max_iter
-            P_new = reshape(P(:) + alpha * dP, [], 3);
-            geo_new = Geometry(M, P_new);
-            %f_nodal_new = traction_to_nodal(f, geo_new);
-            E_new = lagrangian(P_new(:), geo_new.willmore_energy(1), lambda, geo_new.area, f_nodal);
-
-            dE = E - E_new;
-            pred = alpha * quad;
-            if dE >= lsr.c * pred
-                P = P_new;
-                geo = geo_new;
-                accepted = true;
-                alpha_mem = min(alpha / lsr.tau, o.h);
-                break;
-            end
-            alpha = lsr.tau * alpha;
-        end
-        if ~accepted
-            error("backtracking fails");
-        end
-
-        u = reshape((P(:) - P0) / p.dt, size(P));
-        u_background = shear_flow(P, p.gamy);
-
-        %%% Newton Step on f
-
+        b = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
         c = bie_residual(P, M, f, geo, u, u_background, slp_cache, p);
-        f = f - p.chi * reshape((p.Sd*(S + p.Da*N)) \ c(:),size(P));
+        d = geo.area - p.area0;
 
-        eps_c_raw = norm(c(:)) / (sqrt(numel(c)));
-        u_rms = norm(u(:)) / sqrt(numel(u));
-        eps_c = eps_c_raw/ max(u_rms, 1e-14);
+        
+        %descent/ascend
+        P = P - reshape(o.h*(Hess\b(:)),size(P));
+        f = f - p.chi*c;
+        lambda = lambda + o.eta * d;
 
-        darea = geo.area - p.area0;
-        eps_d = abs(darea) / p.area0;
-        lambda = lambda - o.eta * darea;
+        geo = Geometry(M,P);
 
-        % Insert here:
-
-
-
-        %End here
-
-
-
+        eps_b = norm(b)/sqrt(numel(b));
+        eps_c = norm(c)/sqrt(numel(b));
+        eps_d = d/p.area0;
 
         if verbose
-            fprintf("t = %d, j = %d, ls_iter = %d, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g, darea = %0.4g \n", ...
-                t, j, ls_iter, eps_b, eps_c, eps_d, darea);
+            fprintf("t = %d, j = %d, ls_iter = %d, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g, volume = %0.4g \n", ...
+                t, j, ls_iter, eps_b, eps_c, eps_d, geo.volume);
         end
-
-        if eps_b > eps_b_prev
-            eps_b_rise_count = eps_b_rise_count + 1;
-            if eps_b_rise_count > 1000
-                if ~supress_outputs
-                    fprintf("eps_b monotonically increasing; halving o.h and restarting t = %d\n", t);
-                end
-                o.h = 0.5 * o.h;
-                lambda = lambda_restart;
-                f = f_restart;
-                P = reshape(P0 + p.dt * velocity, [], 3);
-                geo = Geometry(M, P);
-                eps_b = Inf;
-                eps_c = Inf;
-                eps_d = Inf;
-                eps_b_prev = Inf;
-                eps_b_rise_count = 0;
-                j = 0;
-                alpha_mem = o.h;
-                continue
-            end
-        else
-            eps_b_rise_count = 0;
-        end
-        eps_b_prev = eps_b;
 
         j = j + 1;
     end
@@ -388,7 +315,7 @@ for t = (start + 1):p.T
     [P, velocity] = rm_rigid_patched(P, (P(:) - P0) / p.dt, geo.v_area,"translation");
     geo = Geometry(M, P);
 
-    if hasRemesher && 0%deformation_criterion(geo)
+    if hasRemesher && 1%deformation_criterion(geo)
         geo_pre = geo;
         if ~supress_outputs
             fprintf("Remeshing. t = %d \n", t);
@@ -409,8 +336,8 @@ for t = (start + 1):p.T
 
     save(dir + sprintf("geo%d.mat", t), "M", "P", "velocity", "lambda", "f", "fb", "p", "o", "r", "lsr");
     if ~supress_outputs
-        fprintf("Save geo%d.mat at j = %d, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g, total time: %0.4f\n", ...
-            t, j, eps_b, eps_c, eps_d, p.total_time);
+        fprintf("Save geo%d.mat at j = %d, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g, vol = %0.3g, total time: %0.4f\n", ...
+            t, j, eps_b, eps_c, eps_d, geo.volume, p.total_time);
     end
 end
 
@@ -425,30 +352,23 @@ function [velocity, f] = map_data(geo, geo_pre, velocity_pre, f_pre)
     f = interpolate(geo_pre.F, face, uv, f_pre);
 end
 
-function c_res = bie_residual(P, M, f, geo, u, u_background, slp_cache, p) %takes in  traction f, returns traction c
-    slpout = stokeslet_SLP_triangle(P, M, f, slp_cache);
-    normal_slip = p.Gamma - dot(f, geo.v_normal, 2);
-    c_res = - u + u_background + p.Sd * slpout - p.Sd*p.Da*normal_slip.*geo.v_normal;
-end
-
-function b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p) % takes in traction f, returns nodal b_res
+function b_out = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p)
     geo = Geometry(M, P);
     f_nodal = traction_to_nodal(f, geo);
-    fb = geo.bending_force(1);
     twoHn = geo.lap * P;
     u = reshape((P(:) - P0) / p.dt, size(P));
     fv = reshape(-2 * (KTK + p.k * DTD) * u(:), size(P));
     fs = reshape(lambda * twoHn, size(P));
+    fb = geo.bending_force(1);
     f_mem = fv + fb + fs;
-    b_res = -f_nodal - f_mem;
+    b_out = -f_nodal - f_mem;
 end
 
-function nodal = traction_to_nodal(traction, geo)
-    nodal = traction .* geo.v_area;
-end
-
-function traction = nodal_to_traction(nodal, geo)
-    traction = nodal ./ geo.v_area;
+function c_out = bie_residual(P, M, f, geo, u, u_background, slp_cache, p)
+    slpout = stokeslet_SLP_triangle(P, M, f, slp_cache);
+    normal_slip = p.Gamma + dot(f, geo.v_normal, 2);
+    c_out =  u - u_background - p.Sd * slpout ...
+        - p.Sd * p.Da * normal_slip .* geo.v_normal;
 end
 
 function N = normal_projection_matrix(v_normal)
@@ -457,7 +377,6 @@ function N = normal_projection_matrix(v_normal)
     cols = zeros(9 * n_v, 1);
     vals = zeros(9 * n_v, 1);
     cursor = 0;
-
     for i = 1:n_v
         ni = v_normal(i, :).';
         block = ni * ni.';
@@ -471,6 +390,13 @@ function N = normal_projection_matrix(v_normal)
             end
         end
     end
-
     N = sparse(rows, cols, vals, 3 * n_v, 3 * n_v);
+end
+
+function nodal = traction_to_nodal(traction, geo)
+    nodal = traction .* geo.v_area;
+end
+
+function traction = nodal_to_traction(nodal, geo)
+    traction = nodal ./ geo.v_area;
 end

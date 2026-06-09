@@ -20,10 +20,10 @@
 \section*{Acrivos' Boundary Integral Formulation}
 Consider a region $\Omega_i$ of fluid with viscosity $\lambda\mu$ which is surrounded by a region $\Omega_e$ of fluid with viscosity $\mu$, separated by a boundary denoted $S$. The representation theorem of Stokes flow allows us to express the interior and exterior problems as integral equations on the boundary $S$,
 \begin{equation}
-u_i(\bm{x}) = \frac{1}{8\pi\lambda\mu}\int_S K_{ij}(\bm{x}-\bm{\eta})\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})dS_\eta + \frac{1}{4\pi}\int_S T_{ijk}(\bm{x}-\bm{\eta})u_j(\bm{\eta})n_k(\bm{\eta})dS_\eta
+U_i(\bm{x}) = \frac{1}{8\pi\lambda\mu}\int_S K_{ij}(\bm{x}-\bm{\eta})\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})dS_\eta + \frac{1}{4\pi}\int_S T_{ijk}(\bm{x}-\bm{\eta})U_j(\bm{\eta})n_k(\bm{\eta})dS_\eta
 \end{equation}
 \begin{equation}
-u_i(\bm{x}) = u_i^{\infty}(\bm{x})-\frac{1}{8\pi\mu}\int_S K_{ij}(\bm{x}-\bm{\eta})\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})dS_\eta - \frac{1}{4\pi}\int_S T_{ijk}(\bm{x}-\bm{\eta})u_j(\bm{\eta})n_k(\bm{\eta})dS_\eta
+U_i(\bm{x}) = u_i^{\infty}(\bm{x})-\frac{1}{8\pi\mu}\int_S K_{ij}(\bm{x}-\bm{\eta})\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})dS_\eta - \frac{1}{4\pi}\int_S T_{ijk}(\bm{x}-\bm{\eta})U_j(\bm{\eta})n_k(\bm{\eta})dS_\eta
 \end{equation}
 where $\bm{n}$ is the outward-facing normal of $S$. Note the differences in sign due to the appearance of the normal vector in the single- and double-layer potentials, and the fact that the exterior problem includes a term for the far-field flow $\bm{u}^\infty$. For position vectors, Latin and Greek letters represent points in the bulk and on the surface respectively, and $\bm{\sigma}$ is the stress tensor such that $\sigma_{ij}(\bm{\eta})n_j(\bm{\eta})$ is the traction on $S$. $\bm{K}$ is the Oseen-Burgers tensor and $\bm{T}$ is its associated stress tensor,
 \begin{equation}
@@ -31,22 +31,22 @@ K_{ij} = \frac{\delta_{ij}}{x}+\frac{x_ix_j}{x^3}\text{,} \quad T_{ijk}=-3\frac{
 \end{equation}
 Equations (1) and (2) are valid in the regions $\Omega_i$ and $\Omega_e$ respectively. Outside of their respective domains, they fail to represent the flow, including directly on the boundary $S$, where the double-layer potential has a discontinuity. To properly evaluate the flow on $S$, we must incorporate the jump condition due to Ladyzhenskaya, 
 \begin{equation}
-    \lim_{\bm{x}\rightarrow\bm{\xi}}\left(\frac{1}{4\pi} \int_S T_{ijk}(\bm{x}-\bm{\eta})u_j(\bm{\eta})n_k(\bm{\eta})dS_\eta\right)
+    \lim_{\bm{x}\rightarrow\bm{\xi}}\left(\frac{1}{4\pi} \int_S T_{ijk}(\bm{x}-\bm{\eta})U_j(\bm{\eta})n_k(\bm{\eta})dS_\eta\right)
     =\begin{dcases} 
-      \frac{1}{2}u_i(\bm{\xi}) +  \frac{1}{4\pi} \int_S T_{ijk}(\bm{\xi}-\bm{\eta})u_j(\bm{\eta})n_k(\bm{\eta})dS_\eta \quad &x \in \Omega_i\\
-      -\frac{1}{2}u_i(\bm{\xi}) +  \frac{1}{4\pi} \int_S T_{ijk}(\bm{\xi}-\bm{\eta})u_j(\bm{\eta})n_k(\bm{\eta})dS_\eta &x\in\Omega_e.
+      \frac{1}{2}U_i(\bm{\xi}) +  \frac{1}{4\pi} \int_S T_{ijk}(\bm{\xi}-\bm{\eta})U_j(\bm{\eta})n_k(\bm{\eta})dS_\eta \quad &x \in \Omega_i\\
+      -\frac{1}{2}U_i(\bm{\xi}) +  \frac{1}{4\pi} \int_S T_{ijk}(\bm{\xi}-\bm{\eta})U_j(\bm{\eta})n_k(\bm{\eta})dS_\eta &x\in\Omega_e.
    \end{dcases}
 \end{equation}
 Evaluating (1) and (2) on $S$ yields
 \begin{equation}
-\frac{\lambda}{2}u_i(\bm{\xi}) = \frac{1}{8\pi\mu}\int_S K_{ij}(\bm{\xi}-\bm{\eta})\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})dS_\eta + \frac{\lambda}{4\pi}\int_S T_{ijk}(\bm{\xi}-\bm{\eta})u_j(\bm{\eta})n_k(\bm{\eta})dS_\eta,
+\frac{\lambda}{2}U_i(\bm{\xi}) = \frac{1}{8\pi\mu}\int_S K_{ij}(\bm{\xi}-\bm{\eta})\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})dS_\eta + \frac{\lambda}{4\pi}\int_S T_{ijk}(\bm{\xi}-\bm{\eta})U_j(\bm{\eta})n_k(\bm{\eta})dS_\eta,
 \end{equation}
 \begin{equation}
-\frac{1}{2}u_i(\bm{\xi}) = u_i^{\infty}(\bm{\xi})-\frac{1}{8\pi\mu}\int_S K_{ij}(\bm{\xi}-\bm{\eta})\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})dS_\eta - \frac{1}{4\pi}\int_S T_{ijk}(\bm{\xi}-\bm{\eta})u_j(\bm{\eta})n_k(\bm{\eta})dS_\eta,
+\frac{1}{2}U_i(\bm{\xi}) = u_i^{\infty}(\bm{\xi})-\frac{1}{8\pi\mu}\int_S K_{ij}(\bm{\xi}-\bm{\eta})\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})dS_\eta - \frac{1}{4\pi}\int_S T_{ijk}(\bm{\xi}-\bm{\eta})U_j(\bm{\eta})n_k(\bm{\eta})dS_\eta,
 \end{equation}
 and summing (5) and (6) finally yields our integral equation on the surface S,
 \begin{equation}
-    \frac{1+\lambda}{2}u_i(\bm{\xi}) = u_i^{\infty}(\bm{\xi})-\frac{1}{8\pi\mu}\int_S K_{ij}(\bm{\xi}-\bm{\eta})\llrrbracket{\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})}dS_\eta + \frac{\lambda - 1}{4\pi}\int_S T_{ijk}(\bm{\xi}-\bm{\eta})u_j(\bm{\eta})n_k(\bm{\eta})dS_\eta,
+    \frac{1+\lambda}{2}U_i(\bm{\xi}) = u_i^{\infty}(\bm{\xi})-\frac{1}{8\pi\mu}\int_S K_{ij}(\bm{\xi}-\bm{\eta})\llrrbracket{\sigma_{jk}(\bm{\eta})n_k(\bm{\eta})}dS_\eta + \frac{\lambda - 1}{4\pi}\int_S T_{ijk}(\bm{\xi}-\bm{\eta})U_j(\bm{\eta})n_k(\bm{\eta})dS_\eta,
 \end{equation}
 where $\llrrbracket{\bm{\sigma \cdot n}}=(\bm{\sigma}_e-\bm{\sigma}_i)\cdot\bm{n}$ is the jump in traction across $S$.
 \newpage
@@ -58,19 +58,19 @@ where $\llrrbracket{\bm{\sigma \cdot n}}=(\bm{\sigma}_e-\bm{\sigma}_i)\cdot\bm{n
 
 We start by changing notation slightly. The bulk flow is now denoted by velocity $\bm{U}$ and the velocity of the boundary is denoted by $\bm{u}$. Note that (7) is the equation for the bulk velocity at the boundary, which, in the case of a permeable membrane, will not be equivalent to the velocity of the interface, as in a standard kinematic boundary condition (at the interface between two immiscible fluids, for instance). If we assume no-slip in the tangential direction, we can write down that 
 \begin{equation}
-    \bm{u}-\bm{U} = j_w\bm{n}, \quad \bm{x}\in S
+    \bm{U}-\bm{u} = j_w\bm{n}, \quad \bm{x}\in S
 \end{equation}
 which simply states that the difference between the membrane and the bulk velocities on the surface is equivalent to the volumetric flux of bulk through the membrane. The flux is driven by the jumps in mechanical force and osmotic pressure across the membrane and thus we have the phenomenological relation
 \begin{equation}
-    j_w = -\beta\llrrbracket{RTc + \sigma_{ij}n_in_j}
+    j_w = \beta\llrrbracket{RTc + \sigma_{ij}n_in_j}
 \end{equation}
 where $\beta$ is the hydraulic permeability of the membrane, R is the gas constant, T is the temperature, and c is the concentration of solute. Force balance tells us that the jump in traction across the interface must be equal to the sum of viscous, tension, and bending forces acting on the membrane:
 \begin{equation}
-    \llrrbracket{\sigma_{ij}n_j} = -\zeta L_{ij}u_j + f^{(\gamma)}_i+f^{(b)}_i
+    \llrrbracket{\sigma_{ij}n_j} = \zeta L_{ij}u_j + f^{(\gamma)}_i+f^{(b)}_i
 \end{equation}
 where $\zeta$ is the surface viscosity, $\bm{L}$ is the so-called ``viscosity Laplacian" operator which takes the velocity field on S to the corresponding viscous membrane forces, $\bm{f}^{(\gamma)}$ and $\bm{f}^{(b)}$ are the membrane tension and bending forces respectively. Thus we can express the bulk flow at $S$ in terms of the membrane velocity, the jump in solute concentration, and surface-normal terms found in the well-known momentum equations governing the evolution of a viscous film subject to bending forces:
 \begin{equation}
-    U_i=u_i+\beta\left(RT\llrrbracket{c} - \zeta n_jL_{jk}u_k + n_jf^{(\gamma)}_j+n_jf^{(b)}_j\right)n_i.
+    U_i=u_i+\beta\left(RT\llrrbracket{c} + \zeta n_jL_{jk}u_k + n_jf^{(\gamma)}_j+n_jf^{(b)}_j\right)n_i.
 \end{equation}
 Those surface-normal terms are
 \begin{equation}
@@ -109,13 +109,13 @@ $$u_i = \frac{\kappa_b}{\zeta \ell}\tilde{u_i},\quad \text{or} \quad u_i = \frac
 
 Where $\tilde{(\cdot)}$ represents the dimensionless form of $(\cdot)$. Nondimensionalizing with the surface-viscous scaling, and taking $\lambda=1$ for now, gives
 \begin{multline}
-        \sd{}^{-1}\da{}^{-1}u_i - n_i L_{jk}u_kn_j + n_i f^{(\gamma)}_jn_j 
-        + \da{}^{-1}S_i\left[-L_{jk}u_k + f^{(\gamma)}_j\right]
+        \sd{}^{-1}\da{}^{-1}u_i + n_i L_{jk}u_kn_j + n_i f^{(\gamma)}_jn_j 
+        + \da{}^{-1}S_i\left[L_{jk}u_k + f^{(\gamma)}_j\right]
         \\= \sd{}^{-1}\da{}^{-1}u_i^{\infty} - \Gamma n_i - n_i f^{(b)}_jn_j - \da{}^{-1}S_i\left[f^{(b)}_j\right]
 \end{multline}
 where, by a change of notation every symbol above represents the a nondimensionalized version of the original quantity. For high surface viscosity ($\sd{}\rightarrow\infty$) and high membrane permeability ($\da{}\rightarrow\infty)$ we recover the normal component of the surface Stokes equations with an osmotic pressure jump:
 \begin{equation}
-        -L_{jk}u_kn_j + f^{(\gamma)}_jn_j + f^{(b)}_jn_j
+        L_{jk}u_kn_j + f^{(\gamma)}_jn_j + f^{(b)}_jn_j
         = -\Gamma
 \end{equation}
 Even when surface viscosity dominates bulk viscosity, the terms in the single-layer potential capturing hydrodynamic interactions are still relevant for an impermeable enough membrane:
@@ -186,52 +186,80 @@ We write the bulk dissipation in terms of the volumetric viscous dissipation and
 \begin{equation}
     \Phi_{\text{bulk}} = -\hspace{-1mm}\int\bm{f}\cdot\bm{U}dS+\int\frac{1}{\beta}\left(\bm{u}-\bm{U}\right)^2dS,
 \end{equation}
-using the divergence theorem to write the first term as a surface integral. To eliminate $\bm{U}$ in each term we now have the option to use the boundary integral equation (7) or the flux condition (8),
-\begin{equation}
-    \bm{U}(\bm{x})=\bm{u}^\infty(\bm{x}) - \frac{1}{8\pi\mu}\int\bm{K}(\bm{x}-\bm{y})\cdot\bm{f}(\bm{y})dS_{\bm{y}} = \bm{u}(\bm{x})+\beta\left[RT\llrrbracket{c}+\bm{f}(\bm{x})\cdot\bm{n}(\bm{x})\right]\bm{n}(\bm{x}),\quad \bm{x},\bm{y}\in S.
-\end{equation}
-Using (8) for both terms is appealing because taking the variation yields a momentum equation without any non-local terms, but that may be an indication that doing so is not mathematically sound. Since we expect the hydrodynamic interaction terms in the momentum equation to be non-local, we use (7) for the bulk viscous dissipation and (8) for the permeation dissipation,
-\begin{equation}
-    \Phi = \Phi_{\text{mem}}-\hspace{-1mm}\int\bm{f}\cdot\left(\bm{u}^\infty(\bm{x}) - \frac{1}{8\pi\mu}\int\bm{K}(\bm{x}-\bm{y})\cdot\bm{f}(\bm{y})dS_{\bm{y}} \right)dS+\beta\int\left(RT\llrrbracket{c}+\bm{f}\cdot \bm{n}\right)^2dS.
-\end{equation}
-Taking the variation by perturbing $\bm{u}\rightarrow\bm{u}+\epsilon\bm{\eta}$ and thus $\bm{f}\rightarrow\bm{f}-\epsilon\zeta\bm{L}\bm{\eta}$, we see that the variational gradient of this functional is
-\begin{equation}
-\frac{\delta \Phi}{\delta u_i}=f_i + \frac{\zeta L_{ij}}{4\pi\mu}\int K_{jk}f_kdS - \zeta L_{ij}u^\infty_j -2\beta\zeta(RT\llrrbracket{c}+f_kn_k)L_{ij}n_j.
-\end{equation}
-which nondimensionalizes to
-\begin{equation}
-\frac{\delta \Phi}{\delta u_i}= f_i + \frac{\sd{} L_{ij}}{4\pi}\int K_{jk}f_kdS - \sd{}L_{ij}u^\infty_j -2\sd{}\da{}(\Gamma +f_kn_k)L_{ij}n_j,
-\end{equation}
-or
-\begin{equation}
-\sd{}^{-1}\da{}^{-1}\frac{\delta \Phi}{\delta u_i}= \sd{}^{-1}\da{}^{-1}f_i + \frac{\da{}^{-1} L_{ij}}{4\pi}\int K_{jk}f_kdS - \sd{}^{-1}\da{}^{-1}L_{ij}u^\infty_j -2(\Gamma +f_kn_k)L_{ij}n_j,
-\end{equation}
-which, in the high-$\sd{}$, high-$\da{}$ limit, also recovers the normal component of the evolving-stokes equations.
-
-Alternatively, one can use (7) for both dissipation terms, yielding 
+using the divergence theorem to write the first term as a surface integral. If instead of treating $\bm{f}$ as a quantity immediately determined by $\bm{u}$ and $\gamma$ we treat it as simply the unknown force exerted on the membrane by the bulk, we can write down the Evolving-Stokes Rayleighian augmented by additional terms corresponding to the bulk dissipation and permeative dissipation,
 \begin{multline}
-    \Phi = \Phi_{\text{mem}}-\hspace{-1mm}\int\bm{f}\cdot\left(\bm{u}^\infty(\bm{x}) - \frac{1}{8\pi\mu}\int\bm{K}(\bm{x}-\bm{y})\cdot\bm{f}(\bm{y})dS_{\bm{y}} \right)\\ +\frac{1}{\beta}\left(\bm{u}(\bm{x})-\bm{u}^\infty(\bm{x})+\frac{1}{8\pi\mu}\int\bm{K}(\bm{x}-\bm{y})\cdot\bm{f}(\bm{y})dS_{\bm{y}}\right)^2dS_{\bm{x}}.
+    \mathcal{R}[\bm{u},\bm{f},\gamma] = \\\int\braket{-\bm{L}\bm{u}|\bm{u}}dS+\int\braket{\delta_\varphi V|\bm{u}}dS+\gamma\dot{A}-\int\braket{\bm{f}|\bm{u}}dS+\frac{1}{2}\int\braket{\bm{f}|(\bm{u}^\infty+S[\bm{f}])}dS+\frac{\beta}{2}\int(\Gamma-\bm{f}\cdot\bm{n})^2dS,
 \end{multline}
-with variation
-\begin{equation}
-\frac{\delta \Phi}{\delta u_i}=f_i + \zeta L_{ij}u^\infty_j - 2\zeta L_{ij}u_i^d +\frac{2}{\beta}\left((u_i-u_i^\infty+u_i^d)+L_{ij}\frac{\zeta}{8\pi\mu}\int K_{jk}( u_k - u_k^\infty + u_k^d)dS   \right)
-\end{equation}
-with disturbance velocity $u^d_i = \frac{1}{8\pi\mu}\int K_{jk}f_kdS$. This nondimensionalizes to
-\begin{equation}
-\frac{\delta \Phi}{\delta u_i}=f_i + L_{ij}u^\infty_j - 2\sd{}L_{ij}u_i^d + \da{}^{-1}\sd{}^{-1}(u_i-u_i^\infty+u_i^d)+\da{}^{-1}\frac{1}{8\pi}L_{ij}\int K_{jk}( u_k - u_k^\infty + u_k^d)dS.
-\end{equation}
-In the zero permeability limit this enforces that $\bm{u}-\bm{U}=0$.
-
-\subsection*{Multiple field approach}
-If instead of treating $\bm{f}$ as a quantity immediately determined by $\bm{u}$ and $\gamma$ we treat it as simply the unknown force exerted by the membrane on the bulk, we can write down the Evolving-Stokes Rayleighian augmented by additional terms corresponding to the bulk dissipation and permeative dissipation,
-\begin{multline}
-    \mathcal{R}[\bm{u},\bm{f},\gamma] = \\\int\braket{\bm{L}\bm{u}|\bm{u}}dS+\int\braket{\delta_\varphi V|\bm{u}}dS+\gamma\dot{A}-\int\braket{\bm{f}|\bm{u}}dS-\int\braket{\bm{f}|(\bm{u}^\infty-S[\bm{f}])}dS+\beta\int(\Gamma-\bm{f}\cdot\bm{n})^2dS,
-\end{multline}
-taking variations with respect to our three unknowns, we get the stationary conditions
+where $\bm{L}$ is the symmetric, negative-definite viscosity laplacian operator. Taking variations with respect to our three unknowns, we get the stationary conditions
 \begin{align}
--\frac{\delta\mathcal{R}}{\delta\bm{f}}&=  \bm{u}-\bm{u}^\infty+\sd{}S[\bm{f}]-\sd{}\da{}(\Gamma+\bm{f}\cdot \bm{n})\bm{n}=0,\\
--\frac{\delta \mathcal{R}}{\delta \bm{u}}&=\bm{f}-\bm{L}\bm{u}-\bm{f}^b-\bm{f}^\gamma=0, \quad\text{and}\\
+-\frac{\delta\mathcal{R}}{\delta\bm{f}}&=  \bm{u}-\bm{u}^\infty-\sd{}S[\bm{f}]-\sd{}\da{}(\Gamma-\bm{f}\cdot \bm{n})\bm{n}=0,\\
+-\frac{\delta \mathcal{R}}{\delta \bm{u}}&=\bm{f}+\bm{L}\bm{u}+\bm{f}^b+\bm{f}^\gamma=0, \quad\text{and}\\
 \frac{\delta\mathcal{R}}{\delta\gamma} &= \dot{A} = 0.
 \end{align}
-Respectively, these equations are our boundary integral equation (19), the Evolving-Stokes equations, and the (global) incompressiblity constraint. This changes our solver from a $3N+1$-dimensional problem to a $6N+1$-dimensional problem, but it's not fundamentally more challenging to solve other than the weighting of the different residual terms. 
+Respectively, these equations are our boundary integral equation (19), the Evolving-Stokes equations, and the (global) incompressiblity constraint.
+
+\subsection*{Optimization scheme and feasibility}
+In practice, our scheme achieves stability by solving for the prospective future shape $\varphi^{(n+1)}$ which minimizes the Rayleighian on the original geometry $\varphi^{(n)}$. Thus we can hold fixed the operators on $\varphi_0$ and solve the optimization problem
+\begin{multline}
+    \min_{\varphi^{(n+1)},f^{(n)}}\bigg[\braket{\braket{-\bm{L}^{(n)}(\varphi^{(n+1)}-\varphi^{(n)})|(\varphi^{(n+1)}-\varphi^{(n)})}}+ dt\int (H^{(n+1)})^2-(H^{(n)})^2dS \\ -dt\braket{\braket{f^{(n)}|(\varphi^{(n+1)}-\varphi^{(n)})}}+\frac{dt^2}{2}\braket{\braket{f^{(n)}|\big(u^{\infty}+\sd{}\bm{S}^{(n)}f^{(n)}\big)}}+\frac{dt^2}{2}\sd{}\da{}\int_S\big(\Gamma-f^{(n)}\cdot n^{(n)}\big)^2\bigg]
+\end{multline}
+subject to the constraint
+\begin{equation}
+    A^{(n+1)}-A^{(n)}=0.
+\end{equation}
+The Hessian is
+\begin{gather}
+\bm{H}=
+ \begin{bmatrix} -\bm{L}^{(n)}+dt\bm{\Delta}^{(n)}\bm{\Delta}^{(n)}& -\bm{I} \\ -\bm{I} & dt^2\sd{}(\bm{S}^{(n)}+\da{}\bm{n}^{(n)}\bm{n}^{(n)}) \end{bmatrix}
+ \end{gather}
+ and is entirely determined by the geometry. Is this matrix positive definite, and thus is our problem convex? To be convex,
+\begin{equation}
+    z^THz > 0\text{ for all } \bm{z}.
+\end{equation}
+Picking our geometry (and thus $H$) and $z$ wisely, we can prove there are situations for which this condition is not satisfied. Consider a vector field on the unit sphere composed of magnetic/toroidal vector spherical harmonic modes:
+\begin{equation}
+    z(\phi,\theta) = \sum_{\ell=0}^\infty\sum_{m=-\ell}^\ell z_{\ell m}\bm{T}_{\ell m},\quad \bm{T}_{\ell m}=\bm{n}\times\nabla_s Y_{\ell m}
+\end{equation}
+The Bochner laplacian $\bm{\Delta}$ is a negative-definite operator defined as 
+\begin{equation}
+    \bm{\Delta} = \nabla^\alpha\nabla_\alpha.
+\end{equation}
+We note that, since $\bm{T}_{\ell m}$ are tangent vector fields,
+\begin{equation}
+    \bm{T}_{\ell m}=\bm{n}\times\nabla_s Y_{\ell m}=J\nabla_s Y_{\ell m}
+\end{equation}
+where $J$ is a 90-degree rotation in the tangent plane. Now we can use the commutation formula for the Laplacian and gradient, 
+\begin{equation}
+    J\nabla^\alpha\nabla_\alpha\nabla^\beta Y_{\ell m} = J(\nabla^\beta\Delta_sY_{\ell m} + g^{\beta\mu}Ric_{\mu\alpha}\nabla^\alpha Y_{\ell m}).
+\end{equation}
+On the unit sphere, the Ricci tensor is just the metric tensor, and by the definition of scalar spherical harmonics $\Delta_sY_{\ell m}=-\ell(\ell+1)Y_{\ell m}$, which leaves us with 
+\begin{align}
+    \nabla^\alpha\nabla_\alpha\nabla^\beta JY_{\ell m} &= (1-\ell(\ell+1))JY_{\ell m} \\
+    \bm{\Delta}\bm{T}_{\ell m}&=(1-\ell(\ell+1))\bm{T}_{\ell m}.
+\end{align}
+Now for the full viscosity Laplacian, 
+\begin{equation}
+    -\bm{L}\bm{T}_{\ell m} = (\bm{\Delta}+K+grad\circ div)\bm{T}_{\ell m} + 2\langle \nabla \bm T_{\ell m},II\rangle\, \bm{n}.
+\end{equation}
+Since $\nabla\cdot\bm{T}=0$ the last two terms go away and using the uniform $K=1$ on the unit sphere, 
+\begin{equation}
+    \bm{L}\bm{T}_{\ell m}=(2-\ell(\ell+1))\bm{T}_{\ell m}.
+\end{equation}
+The eigenvalues of the Stokes single-layer operator for vector spherical harmonics have been worked out by Veerapaneni et al. (2017) and the result for the magnetic mode is that 
+\begin{equation}
+    \bm{S}\bm{T}_{\ell m}=\frac{1}{2\ell+1}\bm{T}_{\ell m}.
+\end{equation}
+And clearly, as the toroidal modes are tangential, the normal projection operator $\bm{n}\bm{n}^T$ has eigenvalue $0$. Thus in the subspace of toroidal VSH modes, our Hessian can be expressed simply as 
+\begin{gather}
+\bm{H}=
+ \begin{bmatrix} \ell(\ell+1)-2+dt(1-\ell(\ell+1))^2& -1 \\ -1 & \frac{dt^2}{2\ell+1} \end{bmatrix}.
+ \end{gather}
+Thus, the Hessian has negative eigenvalues when
+$$
+\frac{dt^2(\ell(\ell+1)-2)+dt^3(1-\ell(\ell+1))^2}{2\ell+1}-1<0
+$$
+which means the smallest eigenvalue will be negative when the timestep $dt<1.44$. This proves that the Hessian (35) on a fairly common geometry, the unit sphere, is not positive definite and thus our proposed optimization problem is non-convex.
+
+
+
 \end{document}

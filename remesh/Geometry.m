@@ -267,25 +267,6 @@ classdef Geometry
             end
         end
 
-        function v_force = bending_force_spontaneous(obj, Kb, C0)
-            % Compute the bending force
-            % Inputs:
-            %   Kb: bending modulus
-            % Outputs:
-            %   v_force: n_v by 3 bending force
-
-            Hi = obj.v_mean_curvature(obj.mesh.he_src) ./ obj.v_area(obj.mesh.he_src);
-            Hj = obj.v_mean_curvature(obj.mesh.he_dst) ./ obj.v_area(obj.mesh.he_dst);
-            he_force = Kb * ( - obj.he_gaussian_curvature_vec .* (Hi + Hj - 2*C0) ...
-                + 2 * obj.he_mean_curvature_vec .* (Hi.^2 / 3 + Hj.^2 / 3 * 2 - C0^2) ...
-                - (obj.he_schlafli_vec1 .* (Hi-C0) + obj.he_schlafli_vec2 .* (Hj-C0)));
-            v_force = zeros(obj.mesh.n_v, 3);
-            for i = 1:3
-                v_force(:, i) = accumarray(obj.mesh.he_src, he_force(:, i), [obj.mesh.n_v, 1]);
-            end
-        end
-
-
         function v_force = extra_force(obj, Kb,ext)
             % Compute the bending force
             % Inputs:

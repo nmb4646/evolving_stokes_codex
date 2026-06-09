@@ -1,0 +1,36 @@
+clear;clc;close;
+x = -1;%randn([1,1]);
+y = 1;randn([1,1]);
+
+s = [[x,y]];
+
+a = -3;
+
+
+
+eps = inf;
+step = 1;
+j = 0;
+
+while eps > .00001 && j <200
+    j = j+1;
+    
+    b = [3*x^2 + a*y; 2*y + a*x];
+    Hess = [6x, a; a, 2];
+    dxy = Hess\-b;
+
+    x = x + step*dxy(1);
+    y = x + step*dxy(2);
+
+    eps = norm(b);
+    s = [s;[x,y]];
+end
+
+
+
+[xx,yy]=meshgrid(linspace(-1,1,100),linspace(-1,1,100));
+
+
+
+plot3(s(:,1),s(:,2),s(:,1).^2 + s(:,2).^2 + a.*s(:,1).*s(:,2),'r');hold on;
+surf(xx,yy,xx.^2 + yy.^2 + a.*xx.*yy);
