@@ -76,7 +76,7 @@ if start == 0
         M = loaded.M;
     else
         [P, M] = subdivided_sphere(p.subdivisions);
-        %P(:,3) = P(:,3)*2;
+        P(:,3) = P(:,3)*2;
     end
 
     geo = Geometry(M, P);
@@ -94,9 +94,9 @@ if start == 0
     p.area0 = geo.area;
 
     o.h = .01;
-    o.eta = 10;
-    o.tol_b = .01;
-    o.tol_c = .01;
+    o.eta = 1;
+    o.tol_b = .001;
+    o.tol_c = .001;
     o.tol_d = .01;
     o.tol_f = o.tol_b;
     o.max_iter = 10000;
@@ -202,24 +202,31 @@ else
     slp_cache = stokeslet_SLP_triangle_setup(M);
 
     if p.remesh_size ~= 0 && hasRemesher
+        disp("Remeshing on start")
         r.edge_length = p.remesh_size * mean(geo.he_length);
         geo_pre = geo;
         [M, P] = remeshing(int32(M), P, int32([]), r.edge_length, int32(20));
         M = cast(M, "double");
         geo = Geometry(M, P);
+
+        [P, smooth_info] = valence_neighbor_average_smooth(M, P, ...
+        [5, 7], 1, .25);
+
         P = P * sqrt(p.area0 / geo.area);
         geo = Geometry(M, P);
         [velocity, f] = map_data(geo, geo_pre, velocity, f);
         slp_cache = stokeslet_SLP_triangle_setup(M);
+        disp("Old: " + length(geo_pre.V))
+        disp("New: " + length(geo.V))
     end
 
     %%% OVERRRIDES
-    o.tol_b = .06;
-    o.tol_c = .03;
-    o.tol_d = .01;
+    o.tol_b = .01;
+    % o.tol_c = .03;
+    % o.tol_d = .01;
 
     %.h = o.h*3;
-    %o.eta = o.eta*.5;
+    %o.eta = 0;
     
 
 
@@ -251,9 +258,8 @@ for t = (start + 1):p.T
         - p.dt * (area_ - p.area0) * lambda_...
         - p.dt * f_nodal_(:)' * (P_ - P0);
 
-    % Since the lagrangian is currently only used for the P-wise linesearch i
-    % won't include the final three terms of the rayleighian which are only
-    % dependent on f
+
+
 
 
     S = stokeslet_SLP_triangle_matrix(P, M, slp_cache);
@@ -269,75 +275,33 @@ for t = (start + 1):p.T
     eps_b_prev = Inf;
     eps_b_rise_count = 0;
     j = 0;
-    alpha_mem = o.h;
+    alpha_mem = 1;
+
+
+    % I will comment out from here ...
+    n_state = numel(P);
+    M3 = blkdiag(mass0, mass0, mass0);
+    I_state = speye(n_state);
+    bie_df = p.Sd * (S + p.Da * N);
+    % full_Jac = [
+    %     Hess,              -p.dt * M3;
+    %     -I_state / p.dt,    bie_df
+    % ];
+    % fprintf('R_{uu} condition number: %.4e \n', condest(Hess))
+    % fprintf('Hessian condition number: %.4e \n', condest(full_Jac))
+    % to here
+
+
+
+    %Codex: add new hessian from here
+
+    o.eta = 0;
+
+
+
+    % to here
 
     while ((eps_b > o.tol_b) || (eps_c > o.tol_c) || (eps_d > o.tol_d)) && (j < o.max_iter)
-        % I would comment from here:
-        % f_nodal = traction_to_nodal(f, geo);
-        % E = lagrangian(P(:), geo.willmore_energy(1), lambda, geo.area, f_nodal);
-        % 
-        % fb = geo.bending_force(1);
-        % twoHn = geo.lap * P;
-        % u = reshape((P(:) - P0) / p.dt, size(P));
-        % fv = reshape(-2 * (KTK + p.k * DTD) * u(:), size(P));
-        % fs = reshape(lambda * twoHn, size(P));
-        % f_mem = fv + fb + fs;
-        % b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
-        % b_vec = b(:);
-        % rhs = -b_vec;
-        % 
-        % dP = Hess \ rhs;
-        % 
-        % quad = dP' * rhs;
-        % if quad <= 0
-        %     error('quad = %0.4g should be positive definite', quad);
-        % end
-        % eps_b_step_raw = sqrt(quad);
-        % u_rms = norm(u(:)) / sqrt(numel(u));
-        % eps_b = eps_b_step_raw / max(u_rms, 1e-14);
-        % 
-        % accepted = false;
-        % alpha = min(alpha_mem, o.h / max(1, eps_b_step_raw));
-        % for ls_iter = 1:lsr.max_iter
-        %     P_new = reshape(P(:) + alpha * dP, [], 3);
-        %     geo_new = Geometry(M, P_new);
-        %     %f_nodal_new = traction_to_nodal(f, geo_new);
-        %     E_new = lagrangian(P_new(:), geo_new.willmore_energy(1), lambda, geo_new.area, f_nodal);
-        % 
-        %     dE = E - E_new;
-        %     pred = alpha * quad;
-        %     if dE >= lsr.c * pred
-        %         P = P_new;
-        %         geo = geo_new;
-        %         accepted = true;
-        %         alpha_mem = min(alpha / lsr.tau, o.h);
-        %         break;
-        %     end
-        %     alpha = lsr.tau * alpha;
-        % end
-        % if ~accepted
-        %     error("backtracking fails");
-        % end
-        % 
-        % u = reshape((P(:) - P0) / p.dt, size(P));
-        % u_background = shear_flow(P, p.gamy);
-        % 
-        % %%% Newton Step on f
-        % 
-        % c = bie_residual(P, M, f, geo, u, u_background, slp_cache, p);
-        % f = f - p.chi * reshape((p.Sd*(S + p.Da*N)) \ c(:),size(P));
-        % 
-        % eps_c_raw = norm(c(:)) / (sqrt(numel(c)));
-        % u_rms = norm(u(:)) / sqrt(numel(u));
-        % eps_c = eps_c_raw/ max(u_rms, 1e-14);
-        % 
-        % darea = geo.area - p.area0;
-        % eps_d = abs(darea) / p.area0;
-        % lambda = lambda - o.eta * darea;
-
-
-        % to here.
-        % Insert here:
 
         f_nodal = traction_to_nodal(f, geo);
         fb = geo.bending_force(1);
@@ -348,44 +312,87 @@ for t = (start + 1):p.T
         b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
         P_bie = reshape(P0, [], 3);
         geo_bie = Geometry(M, P_bie);
-        u_background = shearextensionflow(P_bie, p.gamy);
+        u_background = shearextensionflow(P_bie, -p.gamy);
         c = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
 
-        n_state = numel(P);
-        M3 = blkdiag(mass0, mass0, mass0);
-        I_state = speye(n_state);
-        bie_df = p.Sd * (S + p.Da * N);
-        full_Jac = [
-            Hess,              -p.dt * M3;
-            -I_state / p.dt,    bie_df
+
+        % I will comment out from here ...
+        % full_rhs = [
+        %     -b(:);
+        %     -c(:);
+        % ];
+        % full_step = full_Jac \ full_rhs;
+        % 
+        % 
+        % alpha = p.chi;
+        % dP = full_step(1:n_state);
+        % df = reshape(full_step((n_state + 1):end), size(P));
+        % P = reshape(P(:) + alpha * dP, [], 3);
+        % f = f + alpha * df;
+        % geo = Geometry(M, P);
+        % ls_iter = 1;
+        %... to here.
+
+        % Codex: only add stuff in these bounds...
+
+        d = (geo.area - p.area0) / p.area0;
+        area_gradient = geo.lap * P;
+        area_gradient = area_gradient(:);
+        force_gamma_block = -p.dt * area_gradient;
+        area_gamma_block = area_gradient.' / p.area0;
+        full_gamma_Jac = [
+            Hess,              -p.dt * M3,             force_gamma_block;
+            -I_state / p.dt,    bie_df,                sparse(n_state, 1);
+            area_gamma_block,   sparse(1, n_state),    0
         ];
-        full_rhs = [
+        if j==0 
+        fprintf('Full gamma Hessian condition number: %.4e \n', condest(full_gamma_Jac))
+        end
+        full_gamma_rhs = [
             -b(:);
-            -c(:)
+            -c(:);
+            -d
         ];
-        full_step = full_Jac \ full_rhs;
+        row_scale = 1 ./ max(sum(abs(full_gamma_Jac), 2), eps);
+        col_scale = 1 ./ max(sum(abs(full_gamma_Jac), 1).', eps);
+        Dr = spdiags(sqrt(row_scale), 0, size(full_gamma_Jac, 1), size(full_gamma_Jac, 1));
+        Dc = spdiags(sqrt(col_scale), 0, size(full_gamma_Jac, 2), size(full_gamma_Jac, 2));
+        if j==0
+            fprintf('Equilibrated full gamma Hessian condition number: %.4e \n', ...
+                condest(Dr * full_gamma_Jac * Dc))
+        end
+        full_gamma_step = Dc * ((Dr * full_gamma_Jac * Dc) \ (Dr * full_gamma_rhs));
 
         alpha = p.chi;
-        dP = full_step(1:n_state);
-        df = reshape(full_step((n_state + 1):end), size(P));
+        dP = full_gamma_step(1:n_state);
+        df = reshape(full_gamma_step((n_state + 1):(2 * n_state)), size(P));
+        dlambda = full_gamma_step(end);
         P = reshape(P(:) + alpha * dP, [], 3);
         f = f + alpha * df;
+        lambda = lambda + alpha * dlambda;
         geo = Geometry(M, P);
-
         ls_iter = 1;
+
+
+
+
+
+
+        % ... to here
+
+        
         u = reshape((P(:) - P0) / p.dt, size(P));
         c = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
         eps_c_raw = norm(c(:)) / sqrt(numel(c));
         u_rms = norm(u(:)) / sqrt(numel(u));
-        eps_c = eps_c_raw;% / max(u_rms, 1e-14);
+        eps_c = eps_c_raw/ max(u_rms, 1e-14);
 
         darea = geo.area - p.area0;
         eps_d = abs(darea) / p.area0;
         lambda = lambda - o.eta * darea;
         b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
-        eps_b = norm(b_res(:)) / sqrt(numel(b_res));
-
-        %End here
+        eps_b_raw = norm(b_res(:)) / sqrt(numel(b_res));
+        eps_b = eps_b_raw;%/ max(u_rms, 1e-14);
 
 
 
@@ -397,11 +404,11 @@ for t = (start + 1):p.T
 
         if eps_b > eps_b_prev
             eps_b_rise_count = eps_b_rise_count + 1;
-            if eps_b_rise_count > 1000
+            if eps_b_rise_count > 2
                 if ~supress_outputs
                     fprintf("eps_b monotonically increasing; halving o.h and restarting t = %d\n", t);
                 end
-                o.h = 0.5 * o.h;
+                p.chi = 0.8 * p.chi;
                 lambda = lambda_restart;
                 f = f_restart;
                 P = reshape(P0 + p.dt * velocity, [], 3);
@@ -434,7 +441,7 @@ for t = (start + 1):p.T
     [P, velocity] = rm_rigid_patched(P, (P(:) - P0) / p.dt, geo.v_area,"translation");
     geo = Geometry(M, P);
 
-    if hasRemesher && 0%deformation_criterion(geo)
+    if hasRemesher && deformation_criterion(geo)
         geo_pre = geo;
         if ~supress_outputs
             fprintf("Remeshing. t = %d \n", t);
