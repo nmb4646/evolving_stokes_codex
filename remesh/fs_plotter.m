@@ -5,11 +5,11 @@ close all; clc; clear;
 
 dt = 1e-1;
 k = 10000;
-Sd = 23.5;
-Da = 1000;
-Gamma = .1;
-gamy = 0;
-chi = 1e-4;
+Sd = 10;
+Da = 10;
+Gamma = 0;
+gamy = 4.4;
+
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e', Sd, Da, gamy);
 run_tag = strrep(run_tag, '+', 'p');
 run_tag = strrep(run_tag, '-', 'm');
@@ -24,7 +24,7 @@ fprintf("Writing %s\n", name);
 
 view_azi = 179;
 view_ele = 1;
-view_rotation_angle_deg = 90;
+view_rotation_angle_deg = 0;
 view_rotation_axis = [0, 1, 0];
 view_rotation_center = [0, 0, 0];
 alph = .9;
@@ -32,10 +32,10 @@ edge_color = [.3, .3, .3];
 gif_delay = 1 / 14;
 size_x = 1000;
 size_y = 900;
-plot_stride = 80;
+plot_stride = 1;
 
 if ~exist('show_velocity', 'var')
-    show_velocity = false;
+    show_velocity = true;
 end
 if ~exist('velocity_stride', 'var')
     velocity_stride = 1;
@@ -156,7 +156,8 @@ gif_frame_count = 0;
 
 %%% OVERRIDE
 
-plot_ids = tf-100:10:tf;
+plot_ids = 1:tf;
+
 
 for frame_idx = 1:numel(plot_ids)
     n = plot_ids(frame_idx);
