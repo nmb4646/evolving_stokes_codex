@@ -267,6 +267,37 @@ classdef Geometry
             end
         end
 
+        function [K, gradE] = bending_hessian(obj, Kb)
+            % Compute the exact Cartesian Hessian of willmore_energy(Kb).
+            % The local scalar energy is E_i = Kb * M_i^2 / A_i, where
+            % A_i is barycentric dual area and M_i is integrated mean curvature.
+            if nargin < 2 || isempty(Kb)
+                Kb = 1;
+            end
+
+            n_v = obj.mesh.n_v;
+            n_state = 3 * n_v;
+            gradE = zeros(n_state, 1);
+            row_chunks = cell(n_v, 1);
+            col_chunks = cell(n_v, 1);
+            val_chunks = cell(n_v, 1);
+
+            for center = 1:n_v
+                [stencil, grad_loc, hess_loc] = local_bending_energy_derivatives(obj, center, Kb);
+                dofs = [stencil; stencil + n_v; stencil + 2 * n_v];
+                gradE(dofs) = gradE(dofs) + grad_loc;
+
+                [local_rows, local_cols, local_vals] = find(sparse(hess_loc));
+                row_chunks{center} = dofs(local_rows);
+                col_chunks{center} = dofs(local_cols);
+                val_chunks{center} = local_vals;
+            end
+
+            K = sparse(vertcat(row_chunks{:}), vertcat(col_chunks{:}), ...
+                vertcat(val_chunks{:}), n_state, n_state);
+            K = 0.5 * (K + K.');
+        end
+
         function v_force = extra_force(obj, Kb,ext)
             % Compute the bending force
             % Inputs:
@@ -433,5 +464,206 @@ classdef Geometry
             L_v = -A_inv * dv' * obj.mass0;
         end
 
+    end
+end
+
+function [stencil, grad_loc, hess_loc] = local_bending_energy_derivatives(obj, center, Kb)
+    he_list = obj.mesh.v_he(center, 1:obj.mesh.v_n_he(center));
+    he_list = he_list(:);
+    face_list = obj.mesh.he_face(he_list);
+    one_ring = unique(obj.F(face_list, :).', 'stable');
+    one_ring = one_ring(:);
+    stencil = [center; one_ring(one_ring ~= center)];
+
+    local_index = zeros(obj.mesh.n_v, 1);
+    local_index(stencil) = 1:numel(stencil);
+    n_loc = numel(stencil);
+    n_dof = 3 * n_loc;
+    X = cell(n_loc, 3);
+
+    for dim = 1:3
+        for local_vertex = 1:n_loc
+            local_dof = local_vertex + (dim - 1) * n_loc;
+            X{local_vertex, dim} = ad_var(obj.V(stencil(local_vertex), dim), local_dof, n_dof);
+        end
+    end
+
+    A = ad_const(0, n_dof);
+    for idx = 1:numel(face_list)
+        area = face_area_ad(obj, face_list(idx), X, local_index);
+        A = ad_add(A, ad_scale(area, 1 / 3));
+    end
+
+    M = ad_const(0, n_dof);
+    for idx = 1:numel(he_list)
+        edge_length = edge_length_ad(obj, he_list(idx), X, local_index);
+        phi = dihedral_ad(obj, he_list(idx), X, local_index);
+        M = ad_add(M, ad_scale(ad_mul(edge_length, phi), 1 / 4));
+    end
+
+    if A.val <= 0
+        error("Nonpositive local dual area while assembling bending Hessian.");
+    end
+
+    energy = ad_scale(ad_div(ad_mul(M, M), A), Kb);
+    grad_loc = energy.g;
+    hess_loc = energy.H;
+end
+
+function area = face_area_ad(obj, face_id, X, local_index)
+    [area, ~] = face_geometry_ad(obj, face_id, X, local_index);
+end
+
+function normal = face_normal_ad(obj, face_id, X, local_index)
+    [~, normal] = face_geometry_ad(obj, face_id, X, local_index);
+end
+
+function [area, normal] = face_geometry_ad(obj, face_id, X, local_index)
+    face = obj.F(face_id, :);
+    xp = ad_vertex(X, local_index, face(1));
+    xq = ad_vertex(X, local_index, face(2));
+    xr = ad_vertex(X, local_index, face(3));
+    one = ad_vec_sub(xq, xp);
+    second = ad_vec_sub(xr, xq);
+    cross_product = ad_vec_cross(one, second);
+    area2 = ad_vec_norm(cross_product);
+    area = ad_scale(area2, 0.5);
+    normal = ad_vec_div(cross_product, area2);
+end
+
+function edge_length = edge_length_ad(obj, he, X, local_index)
+    edge = edge_vector_ad(obj, he, X, local_index);
+    edge_length = ad_vec_norm(edge);
+end
+
+function phi = dihedral_ad(obj, he, X, local_index)
+    he_flip = obj.mesh.he_flip(he);
+    if he_flip == 0
+        error("Boundary halfedge encountered while assembling closed-surface bending Hessian.");
+    end
+
+    n1 = face_normal_ad(obj, obj.mesh.he_face(he), X, local_index);
+    n2 = face_normal_ad(obj, obj.mesh.he_face(he_flip), X, local_index);
+    edge = edge_vector_ad(obj, he, X, local_index);
+    edge_length = ad_vec_norm(edge);
+    tangent = ad_vec_div(edge, edge_length);
+
+    sigma = ad_vec_dot(ad_vec_cross(n1, n2), tangent);
+    chi = ad_vec_dot(n1, n2);
+    phi = ad_atan2(sigma, chi);
+end
+
+function edge = edge_vector_ad(obj, he, X, local_index)
+    src = ad_vertex(X, local_index, obj.mesh.he_src(he));
+    dst = ad_vertex(X, local_index, obj.mesh.he_dst(he));
+    edge = ad_vec_sub(dst, src);
+end
+
+function x = ad_vertex(X, local_index, global_vertex)
+    idx = local_index(global_vertex);
+    if idx == 0
+        error("Vertex %d is outside the local bending stencil.", global_vertex);
+    end
+    x = X(idx, :);
+end
+
+function y = ad_const(val, n_dof)
+    y.val = val;
+    y.g = zeros(n_dof, 1);
+    y.H = zeros(n_dof, n_dof);
+end
+
+function y = ad_var(val, idx, n_dof)
+    y = ad_const(val, n_dof);
+    y.g(idx) = 1;
+end
+
+function y = ad_add(a, b)
+    y.val = a.val + b.val;
+    y.g = a.g + b.g;
+    y.H = a.H + b.H;
+end
+
+function y = ad_sub(a, b)
+    y.val = a.val - b.val;
+    y.g = a.g - b.g;
+    y.H = a.H - b.H;
+end
+
+function y = ad_scale(a, c)
+    y.val = c * a.val;
+    y.g = c * a.g;
+    y.H = c * a.H;
+end
+
+function y = ad_mul(a, b)
+    y.val = a.val * b.val;
+    y.g = b.val * a.g + a.val * b.g;
+    y.H = b.val * a.H + a.val * b.H + a.g * b.g.' + b.g * a.g.';
+end
+
+function y = ad_div(a, b)
+    y = ad_mul(a, ad_inv(b));
+end
+
+function y = ad_inv(a)
+    y.val = 1 / a.val;
+    y.g = -a.g / (a.val ^ 2);
+    y.H = 2 * (a.g * a.g.') / (a.val ^ 3) - a.H / (a.val ^ 2);
+end
+
+function y = ad_sqrt(a)
+    root = sqrt(a.val);
+    y.val = root;
+    y.g = a.g / (2 * root);
+    y.H = a.H / (2 * root) - (a.g * a.g.') / (4 * root ^ 3);
+end
+
+function y = ad_atan2(sigma, chi)
+    r2 = sigma.val ^ 2 + chi.val ^ 2;
+    r4 = r2 ^ 2;
+    ds = chi.val / r2;
+    dc = -sigma.val / r2;
+    dss = -2 * sigma.val * chi.val / r4;
+    dsc = (sigma.val ^ 2 - chi.val ^ 2) / r4;
+    dcc = 2 * sigma.val * chi.val / r4;
+
+    y.val = atan2(sigma.val, chi.val);
+    y.g = ds * sigma.g + dc * chi.g;
+    y.H = ds * sigma.H + dc * chi.H ...
+        + dss * (sigma.g * sigma.g.') ...
+        + dsc * (sigma.g * chi.g.' + chi.g * sigma.g.') ...
+        + dcc * (chi.g * chi.g.');
+end
+
+function y = ad_vec_sub(a, b)
+    y = cell(1, 3);
+    for dim = 1:3
+        y{dim} = ad_sub(a{dim}, b{dim});
+    end
+end
+
+function y = ad_vec_cross(a, b)
+    y = cell(1, 3);
+    y{1} = ad_sub(ad_mul(a{2}, b{3}), ad_mul(a{3}, b{2}));
+    y{2} = ad_sub(ad_mul(a{3}, b{1}), ad_mul(a{1}, b{3}));
+    y{3} = ad_sub(ad_mul(a{1}, b{2}), ad_mul(a{2}, b{1}));
+end
+
+function y = ad_vec_dot(a, b)
+    y = ad_const(0, numel(a{1}.g));
+    for dim = 1:3
+        y = ad_add(y, ad_mul(a{dim}, b{dim}));
+    end
+end
+
+function y = ad_vec_norm(a)
+    y = ad_sqrt(ad_vec_dot(a, a));
+end
+
+function y = ad_vec_div(a, b)
+    y = cell(1, 3);
+    for dim = 1:3
+        y{dim} = ad_div(a{dim}, b);
     end
 end

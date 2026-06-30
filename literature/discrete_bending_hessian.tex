@@ -1,0 +1,1211 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,mathtools,bm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{longtable}
+\usepackage{array}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  frame=single,
+  breaklines=true,
+  showstringspaces=false,
+  keywordstyle=\color{blue!70!black},
+  commentstyle=\color{green!40!black}
+}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\T}{\mathsf{T}}
+\newcommand{\grad}{\nabla}
+\newcommand{\Hess}{\nabla^2}
+\newcommand{\Id}{\mathbf{I}}
+\newcommand{\zero}{\mathbf{0}}
+\newcommand{\x}{\mathbf{x}}
+\newcommand{\vct}{\mathbf{v}}
+\newcommand{\aV}{\mathbf{a}}
+\newcommand{\mV}{\mathbf{m}}
+\newcommand{\gV}{\mathbf{g}}
+\newcommand{\Q}{\mathbf{Q}}
+\newcommand{\Mmat}{\mathbf{R}}
+\newcommand{\Kmat}{\mathbf{K}}
+\newcommand{\Jmat}{\mathbf{J}}
+\newcommand{\Pmat}{\mathbf{P}}
+\newcommand{\atanTwo}{\operatorname{atan2}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\supp}{\operatorname{supp}}
+
+\title{Exact Discrete Bending Hessian for the Mem3DG Helfrich Energy\\
+\large Mathematical derivation, geometric primitives, sparse assembly, and implementation checks}
+\author{Implementation-oriented technical note}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Purpose and scope}
+
+This document derives the exact Cartesian Hessian of the discrete spontaneous-curvature bending energy used by Mem3DG.  The intended reader is implementing one of the following:
+\begin{enumerate}[label=(\alph*)]
+  \item an assembled sparse Newton matrix,
+  \item a matrix-free Hessian--vector product for Newton--Krylov methods, or
+  \item a reference implementation based on second-order automatic differentiation.
+\end{enumerate}
+
+The central result is deliberately written in terms of four geometric derivatives for each vertex $i$:
+\begin{equation}
+  \aV_i = \grad A_i,
+  \qquad
+  \mV_i = \grad M_i,
+  \qquad
+  \Q_i = \Hess A_i,
+  \qquad
+  \Mmat_i = \Hess M_i,
+\end{equation}
+where $A_i$ is the barycentric dual area and $M_i=A_iH_i$ is the integrated mean curvature.  Once these four quantities are available, the bending Hessian is a short closed-form expression.  This separation is useful because it isolates the energy calculus from the more delicate geometric calculus of triangle areas and signed dihedral angles.
+
+The derivation assumes:
+\begin{itemize}
+  \item a fixed triangulation and fixed topology during differentiation;
+  \item nondegenerate triangles and nonzero edge lengths;
+  \item a consistently oriented manifold triangle mesh;
+  \item bending modulus $\kappa_i$ and spontaneous curvature $c_i$ treated as fixed vertex data during the shape derivative; and
+  \item the Gaussian-curvature term omitted for a closed fixed-topology mesh with constant Gaussian modulus, because it is topologically constant.
+\end{itemize}
+
+Boundary terms, variable Gaussian modulus, geometry-dependent material fields, remeshing, and topology changes require additional terms and are discussed separately.
+
+\section{Important normalization and sign conventions}
+
+\subsection{Paper convention}
+
+The Mem3DG paper uses the discrete bending energy
+\begin{equation}
+  E_b(\x)
+  =
+  \sum_{i=1}^{N}
+  \kappa_i A_i(\x)\bigl(H_i(\x)-c_i\bigr)^2,
+  \label{eq:paper-energy}
+\end{equation}
+where $c_i$ denotes the spontaneous curvature $H_i^*$ in the paper.
+
+The paper defines pointwise mean curvature from integrated mean curvature by
+\begin{equation}
+  H_i = \frac{M_i}{A_i},
+  \qquad
+  M_i = A_iH_i
+      = \frac{1}{4}\sum_{e\ni i}\ell_e\phi_e.
+  \label{eq:Hi-Mi}
+\end{equation}
+Here $\ell_e$ is edge length and $\phi_e$ is the signed dihedral angle.  The factor $1/4$ is the combination of the edge integrated mean-curvature factor $\ell_e\phi_e/2$ and the equal split of an edge quantity between its two endpoint vertices.
+
+\subsection{Current Mem3DG source normalization}
+
+At the time this note was prepared, the current Mem3DG source computes the spontaneous-curvature energy in the form
+\begin{equation}
+  E_b^{\mathrm{code}}
+  =
+  2\sum_i K_{b,i}A_i(H_i-H_{0,i})^2.
+  \label{eq:code-energy}
+\end{equation}
+Therefore all formulas below match the current source by setting
+\begin{equation}
+  \boxed{\kappa_i = 2K_{b,i},\qquad c_i=H_{0,i}.}
+  \label{eq:normalization-map}
+\end{equation}
+The source writes an absolute value before squaring the curvature mismatch.  Algebraically,
+$\lvert H_i-H_{0,i}\rvert^2=(H_i-H_{0,i})^2$, so the absolute value should be removed before differentiation.
+
+This factor of two is consistent with the common continuum convention
+\begin{equation}
+  E=\frac{K_b}{2}\int(2H-C_0)^2\,\dd A
+   =2K_b\int\left(H-\frac{C_0}{2}\right)^2\,\dd A.
+\end{equation}
+
+\subsection{Energy gradient, physical force, and force Jacobian}
+
+This note uses
+\begin{equation}
+  \mathbf{g}_b = \grad_{\x}E_b,
+  \qquad
+  \Kmat_b = \Hess_{\x}E_b.
+\end{equation}
+The physical conservative force and its Jacobian are
+\begin{equation}
+  \boxed{
+  \mathbf{f}_b=-\mathbf{g}_b,
+  \qquad
+  \Jmat_b^{\mathrm{force}}
+  =\frac{\partial\mathbf{f}_b}{\partial\x}
+  =-\Kmat_b.}
+  \label{eq:force-sign}
+\end{equation}
+If a solver uses the stationarity residual $\mathbf{r}=\grad E$ rather than the physical force, its Newton matrix is $+\Kmat_b$.
+
+\section{Global and local coordinates}
+
+Let the mesh have $N$ vertices with positions $\mathbf{x}_i\in\R^3$.  Stack all Cartesian degrees of freedom as
+\begin{equation}
+  \x=
+  \begin{bmatrix}
+    \mathbf{x}_1\\ \vdots\\ \mathbf{x}_N
+  \end{bmatrix}
+  \in\R^{3N}.
+\end{equation}
+
+For a vertex $i$, define its closed one-ring vertex set
+\begin{equation}
+  S_i=\{i\}\cup N(i).
+\end{equation}
+Both $A_i$ and $M_i$ depend only on positions in $S_i$ for a manifold triangle fan.  Let
+\begin{equation}
+  \x_i^{\mathrm{loc}}=\Pmat_i\x\in\R^{3|S_i|}
+\end{equation}
+be the local coordinate vector, where $\Pmat_i$ is a Boolean extraction matrix.  A local Hessian is scattered globally as
+\begin{equation}
+  \Kmat_b
+  =
+  \sum_i \Pmat_i^\T\Kmat_i^{\mathrm{loc}}\Pmat_i.
+  \label{eq:sparse-assembly}
+\end{equation}
+Although each energy contribution has one-ring support, two vertices in the same one-ring of a center vertex can be two graph edges apart.  Consequently, the assembled Hessian generally has a two-ring coupling pattern.
+
+\section{Discrete geometric quantities}
+
+\subsection{Barycentric dual area}
+
+For an oriented triangle $f=(p,q,r)$, let $A_f$ be its unsigned area.  Mem3DG uses the barycentric dual area
+\begin{equation}
+  \boxed{
+  A_i=\frac{1}{3}\sum_{f\ni i}A_f.}
+  \label{eq:dual-area}
+\end{equation}
+This quantity is positive on a nondegenerate mesh and has dimensions of length squared.
+
+\subsection{Integrated and pointwise mean curvature}
+
+For an interior edge $e=(p,q)$ with length $\ell_e$ and signed dihedral angle $\phi_e$, define the edge integrated mean curvature
+\begin{equation}
+  M_e^{\mathrm{edge}}=\frac{1}{2}\ell_e\phi_e.
+\end{equation}
+Splitting equally between the two edge endpoints gives the vertex integrated mean curvature
+\begin{equation}
+  \boxed{
+  M_i=\frac{1}{4}\sum_{e\ni i}\ell_e\phi_e.}
+  \label{eq:integrated-mean-curvature}
+\end{equation}
+The corresponding pointwise mean curvature is
+\begin{equation}
+  \boxed{H_i=\frac{M_i}{A_i}.}
+\end{equation}
+Thus $M_i$ has dimensions of length and $H_i$ has dimensions of inverse length.
+
+In Geometry Central and the current Mem3DG source, the quantity named \texttt{vertexMeanCurvatures} is the integrated quantity $M_i$.  The pointwise quantity is obtained by dividing by \texttt{vertexDualAreas}.
+
+\subsection{Orientation and signed dihedral angle}
+
+For an interior edge shared by consistently oriented faces
+\begin{equation}
+  f_+=(a,b,c),
+  \qquad
+  f_-=(b,a,d),
+\end{equation}
+define
+\begin{align}
+  \mathbf{d}_e &= \mathbf{x}_b-\mathbf{x}_a,
+  &\ell_e&=\|\mathbf{d}_e\|,
+  &\mathbf{t}_e&=\frac{\mathbf{d}_e}{\ell_e},\\
+  \mathbf{c}_+&=(\mathbf{x}_b-\mathbf{x}_a)\times(\mathbf{x}_c-\mathbf{x}_a),
+  &\mathbf{n}_+&=\frac{\mathbf{c}_+}{\|\mathbf{c}_+\|},\\
+  \mathbf{c}_-&=(\mathbf{x}_a-\mathbf{x}_b)\times(\mathbf{x}_d-\mathbf{x}_b),
+  &\mathbf{n}_-&=\frac{\mathbf{c}_-}{\|\mathbf{c}_-\|}.
+\end{align}
+A robust signed angle is
+\begin{equation}
+  \boxed{
+  \phi_e=\atanTwo(\sigma_e,\chi_e),
+  \qquad
+  \sigma_e=\mathbf{t}_e\cdot(\mathbf{n}_+\times\mathbf{n}_-),
+  \qquad
+  \chi_e=\mathbf{n}_+\cdot\mathbf{n}_-.}
+  \label{eq:signed-dihedral}
+\end{equation}
+For an exactly flat pair of consistently oriented faces, $\sigma_e=0$, $\chi_e=1$, and $\phi_e=0$.  A different global sign convention is acceptable, but the energy, force, spontaneous curvature, and all derivative formulas must use the same convention.
+
+Avoid allowing $\phi_e$ to jump across the $\pm\pi$ branch cut during a Newton step.  Near a fold crossing the branch cut, use step control or an angle-unwrapping strategy.
+
+\section{Vertex energy in a quotient-free form}
+
+Define the curvature mismatch
+\begin{equation}
+  d_i=H_i-c_i.
+\end{equation}
+The vertex energy is
+\begin{equation}
+  E_i=\kappa_iA_i d_i^2.
+\end{equation}
+Using $H_i=M_i/A_i$, this can be written as
+\begin{equation}
+  \boxed{
+  E_i
+  =\kappa_i\frac{(M_i-c_iA_i)^2}{A_i}.}
+  \label{eq:quotient-energy}
+\end{equation}
+Equation~\eqref{eq:quotient-energy} is the most convenient scalar expression for local automatic differentiation.  It also makes clear that a valid implementation requires $A_i>0$.
+
+\section{Exact gradient and Hessian}
+
+\subsection{Primitive derivative notation}
+
+For each vertex energy $E_i$, define derivatives with respect to the relevant Cartesian coordinate vector, either global or local:
+\begin{equation}
+  \aV_i:=\grad A_i,
+  \qquad
+  \mV_i:=\grad M_i,
+  \qquad
+  \Q_i:=\Hess A_i,
+  \qquad
+  \Mmat_i:=\Hess M_i.
+  \label{eq:primitive-derivatives}
+\end{equation}
+Define also
+\begin{equation}
+  \boxed{
+  \gV_i:=\mV_i-H_i\aV_i.}
+  \label{eq:g-def}
+\end{equation}
+Then
+\begin{equation}
+  \boxed{
+  \grad H_i=\frac{\gV_i}{A_i}.}
+  \label{eq:grad-H}
+\end{equation}
+The vector $\gV_i$ is the numerator of the curvature gradient and has dimensions of zero in length units: $M_i$ has length, so its gradient with respect to position is dimensionless; $H_i\aV_i$ is also dimensionless.
+
+\subsection{Exact energy gradient}
+
+Differentiating $E_i=\kappa_iA_i(H_i-c_i)^2$ while holding $\kappa_i$ and $c_i$ fixed gives
+\begin{align}
+  \grad E_i
+  &=\kappa_i\left[
+       2A_i(H_i-c_i)\grad H_i
+       +(H_i-c_i)^2\aV_i
+     \right]\\
+  &=\kappa_i\left[
+       2(H_i-c_i)(\mV_i-H_i\aV_i)
+       +(H_i-c_i)^2\aV_i
+     \right].
+\end{align}
+Therefore
+\begin{equation}
+  \boxed{
+  \grad E_i
+  =
+  \kappa_i\left[
+    2(H_i-c_i)\mV_i
+    -(H_i^2-c_i^2)\aV_i
+  \right].}
+  \label{eq:local-gradient}
+\end{equation}
+Summing these local gradients and taking the negative reproduces the Mem3DG bending force.  Expanding $\mV_i$ into edge-length and dihedral-angle derivatives and expanding $\aV_i$ into triangle-area derivatives gives the halfedge-grouped expression in Appendix~C of the Mem3DG paper.
+
+\subsection{Exact local Cartesian Hessian}
+
+Differentiate Equation~\eqref{eq:local-gradient}.  Since
+\begin{equation}
+  \grad(H_i-c_i)=\frac{\gV_i}{A_i},
+  \qquad
+  \grad(H_i^2-c_i^2)=\frac{2H_i\gV_i}{A_i},
+\end{equation}
+the outer-product terms simplify:
+\begin{align}
+  &\frac{2}{A_i}\mV_i\gV_i^\T
+  -\frac{2H_i}{A_i}\aV_i\gV_i^\T
+  =\frac{2}{A_i}(\mV_i-H_i\aV_i)\gV_i^\T
+  =\frac{2}{A_i}\gV_i\gV_i^\T.
+\end{align}
+The exact local Hessian is therefore
+\begin{equation}
+  \boxed{
+  \Kmat_i
+  :=\Hess E_i
+  =
+  \kappa_i\left[
+    \frac{2}{A_i}\gV_i\gV_i^\T
+    +2(H_i-c_i)\Mmat_i
+    -(H_i^2-c_i^2)\Q_i
+  \right].}
+  \label{eq:master-hessian}
+\end{equation}
+The global bending Hessian is
+\begin{equation}
+  \boxed{
+  \Kmat_b=\sum_i\Kmat_i,}
+  \label{eq:global-hessian}
+\end{equation}
+with local-to-global scatter understood as in Equation~\eqref{eq:sparse-assembly}.
+
+Equation~\eqref{eq:master-hessian} is the main implementation result.
+
+\subsection{Interpretation of every term}
+
+The three terms in Equation~\eqref{eq:master-hessian} have distinct meanings:
+\begin{enumerate}
+  \item \textbf{Curvature-gradient outer product}
+  \begin{equation}
+    \frac{2\kappa_i}{A_i}\gV_i\gV_i^\T
+    =2\kappa_i A_i(\grad H_i)(\grad H_i)^\T.
+  \end{equation}
+  This term is positive semidefinite.  It is present even when $H_i=c_i$ and supplies the leading quadratic stiffness against changes of curvature.
+
+  \item \textbf{Integrated-mean-curvature Hessian}
+  \begin{equation}
+    2\kappa_i(H_i-c_i)\Mmat_i.
+  \end{equation}
+  This term contains the second derivatives of edge lengths and signed dihedral angles.  It vanishes at a vertex where the discrete curvature exactly equals the spontaneous curvature.
+
+  \item \textbf{Dual-area Hessian}
+  \begin{equation}
+    -\kappa_i(H_i^2-c_i^2)\Q_i.
+  \end{equation}
+  This term accounts for the shape dependence of the integration weight $A_i$ and for the area appearing in the denominator of $H_i=M_i/A_i$.
+\end{enumerate}
+
+The exact Hessian is generally indefinite away from a stable local minimum.  This is expected for a nonlinear geometric energy and is not, by itself, an implementation error.
+
+\subsection{Equivalent formula using the Hessian of pointwise curvature}
+
+For debugging, it is useful to record the explicit Hessian of $H_i=M_i/A_i$:
+\begin{equation}
+  \boxed{
+  \Hess H_i
+  =
+  \frac{\Mmat_i}{A_i}
+  -\frac{\mV_i\aV_i^\T+\aV_i\mV_i^\T}{A_i^2}
+  -\frac{H_i}{A_i}\Q_i
+  +\frac{2H_i}{A_i^2}\aV_i\aV_i^\T.}
+  \label{eq:hess-H}
+\end{equation}
+A direct chain-rule expression is
+\begin{align}
+  \Hess E_i
+  =\kappa_i\bigl[
+    &(H_i-c_i)^2\Q_i
+    +2(H_i-c_i)
+      \bigl(\aV_i(\grad H_i)^\T+(\grad H_i)\aV_i^\T\bigr)\\
+    &+2A_i(\grad H_i)(\grad H_i)^\T
+    +2A_i(H_i-c_i)\Hess H_i
+  \bigr].
+  \label{eq:unsimplified-hessian}
+\end{align}
+Substituting Equation~\eqref{eq:hess-H} into Equation~\eqref{eq:unsimplified-hessian} simplifies exactly to Equation~\eqref{eq:master-hessian}.  The simplified formula is preferable in code because it has fewer terms and exposes symmetry.
+
+\section{Exact Hessian--vector product}
+
+For a global displacement direction $\vct\in\R^{3N}$, define
+\begin{equation}
+  \delta A_i=\aV_i^\T\vct,
+  \qquad
+  \delta M_i=\mV_i^\T\vct,
+  \qquad
+  \delta H_i=\frac{\delta M_i-H_i\delta A_i}{A_i}.
+  \label{eq:directional-primitives}
+\end{equation}
+Since $\gV_i^\T\vct=A_i\delta H_i$, Equation~\eqref{eq:master-hessian} gives
+\begin{equation}
+  \boxed{
+  \Kmat_i\vct
+  =\kappa_i\left[
+      2\delta H_i\gV_i
+      +2(H_i-c_i)(\Mmat_i\vct)
+      -(H_i^2-c_i^2)(\Q_i\vct)
+    \right].}
+  \label{eq:hvp}
+\end{equation}
+This expression is ideal for Newton--Krylov methods.  It requires only directional second derivatives
+\begin{equation}
+  \Q_i\vct=D(\grad A_i)[\vct],
+  \qquad
+  \Mmat_i\vct=D(\grad M_i)[\vct],
+\end{equation}
+not the full dense local matrices.
+
+\section{Primitive derivative formulas}
+
+\subsection{A reusable normalized-vector identity}
+
+Many geometric quantities are normalized vectors.  Let
+\begin{equation}
+  \widehat{\mathbf{u}}=\frac{\mathbf{u}}{\rho},
+  \qquad
+  \rho=\|\mathbf{u}\|,
+  \qquad
+  \Pmat_{\mathbf{u}}=\Id-\widehat{\mathbf{u}}\widehat{\mathbf{u}}^\T.
+\end{equation}
+For perturbation directions $\mathbf{p}$ and $\mathbf{q}$ in the underlying coordinates,
+\begin{equation}
+  \boxed{
+  D\widehat{\mathbf{u}}[\mathbf{p}]
+  =\frac{\Pmat_{\mathbf{u}}D\mathbf{u}[\mathbf{p}]}{\rho}.}
+  \label{eq:normalized-first}
+\end{equation}
+The second derivative is
+\begin{equation}
+  \boxed{\begin{aligned}
+  D^2\widehat{\mathbf{u}}[\mathbf{p},\mathbf{q}]
+  ={}&\frac{\Pmat_{\mathbf{u}}D^2\mathbf{u}[\mathbf{p},\mathbf{q}]}{\rho}
+  \\
+  &-\frac{1}{\rho^2}\Bigl[
+    (\widehat{\mathbf{u}}\cdot D\mathbf{u}[\mathbf{p}])
+      \Pmat_{\mathbf{u}}D\mathbf{u}[\mathbf{q}]
+  \\
+  &\hspace{19mm}+
+    (\widehat{\mathbf{u}}\cdot D\mathbf{u}[\mathbf{q}])
+      \Pmat_{\mathbf{u}}D\mathbf{u}[\mathbf{p}]
+  \\
+  &\hspace{19mm}+
+    \widehat{\mathbf{u}}
+      \bigl(D\mathbf{u}[\mathbf{p}]^\T
+      \Pmat_{\mathbf{u}}D\mathbf{u}[\mathbf{q}]\bigr)
+  \Bigr].
+  \end{aligned}}
+  \label{eq:normalized-second}
+\end{equation}
+This identity is used for edge tangents and face normals.
+
+\subsection{Edge length}
+
+For edge $e=(p,q)$, define
+\begin{equation}
+  \mathbf{d}=\mathbf{x}_q-\mathbf{x}_p,
+  \qquad
+  \ell=\|\mathbf{d}\|,
+  \qquad
+  \mathbf{t}=\frac{\mathbf{d}}{\ell},
+  \qquad
+  \Pmat_t=\Id-\mathbf{t}\mathbf{t}^\T.
+\end{equation}
+In local ordering $(\mathbf{x}_p,\mathbf{x}_q)$,
+\begin{equation}
+  \boxed{
+  \grad\ell=
+  \begin{bmatrix}
+    -\mathbf{t}\\
+     \mathbf{t}
+  \end{bmatrix},}
+\end{equation}
+and
+\begin{equation}
+  \boxed{
+  \Hess\ell
+  =\frac{1}{\ell}
+  \begin{bmatrix}
+    \Pmat_t&-\Pmat_t\\
+    -\Pmat_t&\Pmat_t
+  \end{bmatrix}.}
+  \label{eq:edge-length-hessian}
+\end{equation}
+The Hessian has translational null modes and is positive semidefinite.
+
+The edge tangent derivatives follow from Equations~\eqref{eq:normalized-first}--\eqref{eq:normalized-second} with $\mathbf{u}=\mathbf{d}$.  Because $\mathbf{d}$ is affine in the vertex coordinates, $D^2\mathbf{d}=0$.
+
+\subsection{Triangle area}
+
+For an oriented face $f=(p,q,r)$, set
+\begin{equation}
+  \mathbf{u}=\mathbf{x}_q-\mathbf{x}_p,
+  \qquad
+  \mathbf{v}=\mathbf{x}_r-\mathbf{x}_p,
+  \qquad
+  \mathbf{c}=\mathbf{u}\times\mathbf{v},
+\end{equation}
+\begin{equation}
+  s=\|\mathbf{c}\|,
+  \qquad
+  A_f=\frac{s}{2},
+  \qquad
+  \mathbf{n}=\frac{\mathbf{c}}{s},
+  \qquad
+  \Pmat_n=\Id-\mathbf{n}\mathbf{n}^\T.
+\end{equation}
+For a coordinate perturbation $\mathbf{p}$, write
+\begin{equation}
+  \delta\mathbf{u}_{\mathbf{p}}
+  =\delta\mathbf{x}_{q,\mathbf{p}}-\delta\mathbf{x}_{p,\mathbf{p}},
+  \qquad
+  \delta\mathbf{v}_{\mathbf{p}}
+  =\delta\mathbf{x}_{r,\mathbf{p}}-\delta\mathbf{x}_{p,\mathbf{p}}.
+\end{equation}
+Then
+\begin{equation}
+  D\mathbf{c}[\mathbf{p}]
+  =\delta\mathbf{u}_{\mathbf{p}}\times\mathbf{v}
+   +\mathbf{u}\times\delta\mathbf{v}_{\mathbf{p}},
+  \label{eq:cross-first}
+\end{equation}
+and
+\begin{equation}
+  D^2\mathbf{c}[\mathbf{p},\mathbf{q}]
+  =\delta\mathbf{u}_{\mathbf{p}}\times\delta\mathbf{v}_{\mathbf{q}}
+   +\delta\mathbf{u}_{\mathbf{q}}\times\delta\mathbf{v}_{\mathbf{p}}.
+  \label{eq:cross-second}
+\end{equation}
+The first variation is
+\begin{equation}
+  DA_f[\mathbf{p}]
+  =\frac{1}{2}\mathbf{n}\cdot D\mathbf{c}[\mathbf{p}].
+\end{equation}
+The standard vertex gradients are
+\begin{align}
+  \grad_{\mathbf{x}_p}A_f
+  &=\frac{1}{2}(\mathbf{x}_q-\mathbf{x}_r)\times\mathbf{n},\\
+  \grad_{\mathbf{x}_q}A_f
+  &=\frac{1}{2}(\mathbf{x}_r-\mathbf{x}_p)\times\mathbf{n},\\
+  \grad_{\mathbf{x}_r}A_f
+  &=\frac{1}{2}(\mathbf{x}_p-\mathbf{x}_q)\times\mathbf{n}.
+\end{align}
+The exact area Hessian is most compactly expressed as a bilinear form:
+\begin{equation}
+  \boxed{
+  D^2A_f[\mathbf{p},\mathbf{q}]
+  =\frac{1}{2}\left[
+    \frac{D\mathbf{c}[\mathbf{p}]^\T\Pmat_nD\mathbf{c}[\mathbf{q}]}{s}
+    +\mathbf{n}\cdot D^2\mathbf{c}[\mathbf{p},\mathbf{q}]
+  \right].}
+  \label{eq:triangle-area-hessian}
+\end{equation}
+Equation~\eqref{eq:triangle-area-hessian} defines the $9\times9$ local face Hessian exactly.  It can be converted to a matrix by applying it to coordinate basis directions, or implemented directly through Jacobians of $\mathbf{c}$.
+
+An equivalent matrix formula is
+\begin{equation}
+  \Hess A_f
+  =\frac{1}{2}\left[
+    \frac{\Jmat_c^\T\Pmat_n\Jmat_c}{s}
+    +\sum_{\alpha=1}^{3}n_\alpha\Hess c_\alpha
+  \right],
+  \label{eq:area-hessian-matrix}
+\end{equation}
+where $\Jmat_c$ is the $3\times9$ Jacobian of the cross-product vector and $\Hess c_\alpha$ is the $9\times9$ Hessian of its $\alpha$th component.
+
+The face-normal derivatives follow from Equations~\eqref{eq:normalized-first}--\eqref{eq:normalized-second} with $\mathbf{u}=\mathbf{c}$, using Equations~\eqref{eq:cross-first}--\eqref{eq:cross-second}.
+
+\subsection{Dual-area gradient and Hessian}
+
+By linearity of Equation~\eqref{eq:dual-area},
+\begin{equation}
+  \boxed{
+  \aV_i=\frac{1}{3}\sum_{f\ni i}\grad A_f,
+  \qquad
+  \Q_i=\frac{1}{3}\sum_{f\ni i}\Hess A_f.}
+  \label{eq:dual-area-derivatives}
+\end{equation}
+Every face derivative is scattered into the local one-ring coordinates of vertex $i$.
+
+\subsection{Signed dihedral-angle gradient and Hessian}
+
+Use the quantities in Equation~\eqref{eq:signed-dihedral} and define
+\begin{equation}
+  r^2=\sigma^2+\chi^2.
+\end{equation}
+For exact unit normals, $r^2=1$ analytically.  Keeping $r^2$ in the formulas improves robustness and makes the chain rule explicit.
+
+Let
+\begin{equation}
+  \mathbf{g}_{\sigma}=\grad\sigma,
+  \qquad
+  \mathbf{g}_{\chi}=\grad\chi,
+  \qquad
+  \mathbf{H}_{\sigma}=\Hess\sigma,
+  \qquad
+  \mathbf{H}_{\chi}=\Hess\chi.
+\end{equation}
+Then
+\begin{equation}
+  \boxed{
+  \grad\phi
+  =\frac{\chi\mathbf{g}_{\sigma}-\sigma\mathbf{g}_{\chi}}{r^2}.}
+  \label{eq:dihedral-gradient}
+\end{equation}
+The exact dihedral Hessian is
+\begin{equation}
+  \boxed{\begin{aligned}
+  \Hess\phi
+  ={}&\frac{\chi}{r^2}\mathbf{H}_{\sigma}
+     -\frac{\sigma}{r^2}\mathbf{H}_{\chi}
+  \\
+  &-\frac{2\sigma\chi}{r^4}
+      \mathbf{g}_{\sigma}\mathbf{g}_{\sigma}^\T
+  +\frac{\sigma^2-\chi^2}{r^4}
+      \left(
+        \mathbf{g}_{\sigma}\mathbf{g}_{\chi}^\T
+        +\mathbf{g}_{\chi}\mathbf{g}_{\sigma}^\T
+      \right)
+  \\
+  &+\frac{2\sigma\chi}{r^4}
+      \mathbf{g}_{\chi}\mathbf{g}_{\chi}^\T.
+  \end{aligned}}
+  \label{eq:dihedral-hessian}
+\end{equation}
+This formula is the Hessian chain rule for $\atanTwo(\sigma,\chi)$.
+
+The first directional derivatives needed to construct $\mathbf{g}_{\sigma}$ and $\mathbf{g}_{\chi}$ are
+\begin{align}
+  D\sigma[\mathbf{p}]
+  ={}&D\mathbf{t}[\mathbf{p}]\cdot(\mathbf{n}_+\times\mathbf{n}_-)
+  \\
+  &+\mathbf{t}\cdot\left(
+      D\mathbf{n}_+[\mathbf{p}]\times\mathbf{n}_-
+      +\mathbf{n}_+\times D\mathbf{n}_-[\mathbf{p}]
+    \right),
+  \label{eq:sigma-first}\\
+  D\chi[\mathbf{p}]
+  ={}&D\mathbf{n}_+[\mathbf{p}]\cdot\mathbf{n}_-
+      +\mathbf{n}_+\cdot D\mathbf{n}_-[\mathbf{p}].
+  \label{eq:chi-first}
+\end{align}
+The second directional derivatives are
+\begin{align}
+  D^2\sigma[\mathbf{p},\mathbf{q}]
+  ={}&D^2\mathbf{t}[\mathbf{p},\mathbf{q}]
+       \cdot(\mathbf{n}_+\times\mathbf{n}_-)
+  \\
+  &+D\mathbf{t}[\mathbf{p}]\cdot\left(
+       D\mathbf{n}_+[\mathbf{q}]\times\mathbf{n}_-
+       +\mathbf{n}_+\times D\mathbf{n}_-[\mathbf{q}]
+     \right)
+  \\
+  &+D\mathbf{t}[\mathbf{q}]\cdot\left(
+       D\mathbf{n}_+[\mathbf{p}]\times\mathbf{n}_-
+       +\mathbf{n}_+\times D\mathbf{n}_-[\mathbf{p}]
+     \right)
+  \\
+  &+\mathbf{t}\cdot\Bigl(
+       D^2\mathbf{n}_+[\mathbf{p},\mathbf{q}]\times\mathbf{n}_-
+       +D\mathbf{n}_+[\mathbf{p}]\times D\mathbf{n}_-[\mathbf{q}]
+  \\
+  &\hspace{25mm}
+       +D\mathbf{n}_+[\mathbf{q}]\times D\mathbf{n}_-[\mathbf{p}]
+       +\mathbf{n}_+\times D^2\mathbf{n}_-[\mathbf{p},\mathbf{q}]
+     \Bigr),
+  \label{eq:sigma-second}\\
+  D^2\chi[\mathbf{p},\mathbf{q}]
+  ={}&D^2\mathbf{n}_+[\mathbf{p},\mathbf{q}]\cdot\mathbf{n}_-
+  \\
+  &+D\mathbf{n}_+[\mathbf{p}]\cdot D\mathbf{n}_-[\mathbf{q}]
+   +D\mathbf{n}_+[\mathbf{q}]\cdot D\mathbf{n}_-[\mathbf{p}]
+  \\
+  &+\mathbf{n}_+\cdot D^2\mathbf{n}_-[\mathbf{p},\mathbf{q}].
+  \label{eq:chi-second}
+\end{align}
+The required derivatives of $\mathbf{t}$ and $\mathbf{n}_{\pm}$ are all instances of Equations~\eqref{eq:normalized-first}--\eqref{eq:normalized-second}.
+
+For production code, Equation~\eqref{eq:dihedral-hessian} is often best implemented by second-order automatic differentiation of the small four-vertex edge-diamond function.  It is also reasonable to use a specialized closed-form hinge-angle Hessian, such as the formulas of Tamstorf and Grinspun, provided its orientation and angle convention exactly match the Mem3DG convention.
+
+\subsection{Integrated mean-curvature gradient and Hessian}
+
+From Equation~\eqref{eq:integrated-mean-curvature},
+\begin{equation}
+  M_i=\frac{1}{4}\sum_{e\ni i}\ell_e\phi_e.
+\end{equation}
+Therefore
+\begin{equation}
+  \boxed{
+  \mV_i
+  =\frac{1}{4}\sum_{e\ni i}
+    \left(
+      \phi_e\grad\ell_e
+      +\ell_e\grad\phi_e
+    \right).}
+  \label{eq:M-gradient}
+\end{equation}
+The exact Hessian is
+\begin{equation}
+  \boxed{\begin{aligned}
+  \Mmat_i
+  =\frac{1}{4}\sum_{e\ni i}\Bigl[
+     &\phi_e\Hess\ell_e
+      +\ell_e\Hess\phi_e
+  \\
+     &+(\grad\ell_e)(\grad\phi_e)^\T
+      +(\grad\phi_e)(\grad\ell_e)^\T
+  \Bigr].
+  \end{aligned}}
+  \label{eq:M-hessian}
+\end{equation}
+The last two terms are required by the product rule and are essential for symmetry.  Omitting either one produces an incorrect Jacobian.
+
+Each edge term is naturally computed on its four-vertex diamond and scattered into the one-ring coordinate vector for $M_i$.  Boundary edges require a boundary-specific curvature convention; a common closed-surface implementation simply excludes boundary dihedral terms.
+
+\section{Recommended implementation strategies}
+
+\subsection{Strategy A: local scalar energy with second-order automatic differentiation}
+
+This is the recommended first implementation because it is compact and difficult to get algebraically wrong.
+
+For each center vertex $i$:
+\begin{enumerate}
+  \item Gather the positions of the closed one-ring $S_i$ into a local vector $\x_i^{\mathrm{loc}}$.
+  \item Recompute all incident triangle areas and all incident signed dihedral angles using only the local coordinates.
+  \item Compute
+  \begin{equation}
+    A_i=\frac{1}{3}\sum_{f\ni i}A_f,
+    \qquad
+    M_i=\frac{1}{4}\sum_{e\ni i}\ell_e\phi_e.
+  \end{equation}
+  \item Evaluate the scalar local energy
+  \begin{equation}
+    E_i=\kappa_i\frac{(M_i-c_iA_i)^2}{A_i}.
+  \end{equation}
+  \item Ask the AD library for the local gradient and local Hessian.
+  \item Scatter-add them into the global gradient and sparse Hessian.
+\end{enumerate}
+
+A C++-like sketch is:
+\begin{lstlisting}[language=C++]
+for (Vertex i : mesh.vertices()) {
+    LocalStencil S = buildClosedOneRingStencil(i);
+    ADVector x = gatherADPositions(S);
+
+    ADScalar A = 0.0;
+    for (Face f : incidentFaces(i)) {
+        A += triangleAreaAD(x, f, S) / 3.0;
+    }
+
+    ADScalar M = 0.0;
+    for (Edge e : incidentEdges(i)) {
+        ADScalar l   = edgeLengthAD(x, e, S);
+        ADScalar phi = signedDihedralAD(x, e, S);
+        M += 0.25 * l * phi;
+    }
+
+    // For the current Mem3DG source use kappa = 2 * Kb[i].
+    ADScalar E = kappa[i] * square(M - c[i] * A) / A;
+
+    Vector gloc = gradient(E, x);
+    Matrix Kloc = hessian(E, x);
+
+    scatterAdd(globalGradient, gloc, S);
+    scatterAdd(globalHessian,  Kloc, S);
+}
+\end{lstlisting}
+
+Advantages:
+\begin{itemize}
+  \item It differentiates exactly the scalar energy actually implemented.
+  \item Symmetry follows automatically, up to floating-point and AD tolerances.
+  \item It avoids differentiating the already-grouped halfedge force expression.
+  \item It provides a high-quality reference against which a hand-optimized analytic implementation can be tested.
+\end{itemize}
+
+Disadvantages:
+\begin{itemize}
+  \item Second-order AD can be expensive if the local tape is rebuilt repeatedly.
+  \item Dynamic one-ring sizes complicate template-based fixed-size AD.
+  \item A generic AD package may allocate heavily unless local buffers are reused.
+\end{itemize}
+
+\subsection{Strategy B: analytic primitive Hessians plus the master formula}
+
+For each vertex $i$:
+\begin{enumerate}
+  \item Accumulate $A_i$, $\aV_i$, and $\Q_i$ from incident face areas.
+  \item Accumulate $M_i$, $\mV_i$, and $\Mmat_i$ from incident edge products $\ell_e\phi_e$.
+  \item Compute $H_i=M_i/A_i$ and $\gV_i=\mV_i-H_i\aV_i$.
+  \item Evaluate Equation~\eqref{eq:local-gradient} and Equation~\eqref{eq:master-hessian}.
+  \item Scatter-add to global arrays.
+\end{enumerate}
+
+A C++-like sketch is:
+\begin{lstlisting}[language=C++]
+for (Vertex i : mesh.vertices()) {
+    Stencil S = closedOneRing(i);
+    double A = 0.0;
+    Vector a = zeros(3 * S.size());
+    Matrix Q = zeros(3 * S.size(), 3 * S.size());
+
+    for (Face f : incidentFaces(i)) {
+        AreaDerivatives df = triangleAreaDerivatives(f, S);
+        A += df.value / 3.0;
+        a += df.gradient / 3.0;
+        Q += df.hessian / 3.0;
+    }
+
+    double M = 0.0;
+    Vector m = zerosLike(a);
+    Matrix R = zerosLike(Q);
+
+    for (Edge e : incidentEdges(i)) {
+        EdgeLengthDerivatives dl = edgeLengthDerivatives(e, S);
+        DihedralDerivatives  dp = signedDihedralDerivatives(e, S);
+
+        M += 0.25 * dl.value * dp.value;
+        m += 0.25 * (dp.value * dl.gradient
+                   + dl.value * dp.gradient);
+        R += 0.25 * (dp.value * dl.hessian
+                   + dl.value * dp.hessian
+                   + outer(dl.gradient, dp.gradient)
+                   + outer(dp.gradient, dl.gradient));
+    }
+
+    double H = M / A;
+    Vector g = m - H * a;
+    double d = H - c[i];
+
+    Vector gradE = kappa[i] * (2.0 * d * m
+                             - (H * H - c[i] * c[i]) * a);
+
+    Matrix hessE = kappa[i] * (
+          (2.0 / A) * outer(g, g)
+        + 2.0 * d * R
+        - (H * H - c[i] * c[i]) * Q);
+
+    scatterAdd(globalGradient, gradE, S);
+    scatterAdd(globalHessian, hessE, S);
+}
+\end{lstlisting}
+
+This organization is more maintainable than differentiating the grouped Mem3DG force term by term.  The latter requires derivatives of the mean-curvature, Gaussian-curvature, and Schlaefli vectors and tends to obscure exact Hessian symmetry.
+
+\subsection{Strategy C: matrix-free directional differentiation}
+
+For a Hessian--vector product, compute the directional derivatives of every local primitive under the gathered local displacement direction.  Use Equation~\eqref{eq:hvp}.  A forward-over-reverse AD mode on the local scalar energy is often efficient for this purpose.
+
+\section{Sparse matrix assembly details}
+
+\subsection{Local indexing}
+
+Create a deterministic ordered list
+\begin{equation}
+  S_i=(s_0,s_1,\ldots,s_{m_i-1})
+\end{equation}
+with $s_0=i$ if convenient.  Maintain a map from global vertex index to local stencil index.  Every face or edge-diamond derivative is first expressed in its natural local ordering and then scattered into the $3m_i$ local vector or matrix.
+
+For a local vertex index $a$, its three coordinate columns are
+\begin{equation}
+  3a,
+  \quad 3a+1,
+  \quad 3a+2.
+\end{equation}
+Use the same convention globally.
+
+\subsection{Triplet assembly}
+
+For an assembled sparse Hessian, append every nonzero $3\times3$ block of each $\Kmat_i^{\mathrm{loc}}$ as sparse triplets.  Let the sparse-matrix constructor sum duplicate entries.  Do not overwrite duplicate blocks, because many vertex energies contribute to the same global pair.
+
+After assembly, numerical symmetrization
+\begin{equation}
+  \Kmat_b\leftarrow\frac{1}{2}(\Kmat_b+\Kmat_b^\T)
+\end{equation}
+may remove roundoff asymmetry, but it must not be used to hide a derivation error.  The unsymmetrized relative defect should already be near machine precision for an analytic or AD implementation.
+
+\subsection{Constraint handling}
+
+Apply fixed-vertex or fixed-coordinate constraints after assembling the unconstrained Hessian.  Common choices are:
+\begin{itemize}
+  \item eliminate constrained degrees of freedom;
+  \item replace constrained rows and columns by identity; or
+  \item solve in a projected free subspace.
+\end{itemize}
+The chosen operation must be applied consistently to the residual or force vector.
+
+\section{Verification and regression tests}
+
+A Hessian implementation should not be accepted based only on visual simulation behavior.  Use the tests below on random nondegenerate meshes, a tetrahedron, an icosphere, and meshes with heterogeneous $\kappa_i$ and $c_i$.
+
+\subsection{Energy--gradient directional test}
+
+Choose a random normalized direction $\vct$.  Verify
+\begin{equation}
+  \frac{E(\x+\varepsilon\vct)-E(\x-\varepsilon\vct)}{2\varepsilon}
+  \approx
+  \grad E(\x)^\T\vct.
+  \label{eq:grad-test}
+\end{equation}
+For a range of $\varepsilon$, the error should initially decrease like $O(\varepsilon^2)$ and then increase due to roundoff.
+
+\subsection{Gradient--Hessian directional test}
+
+Verify
+\begin{equation}
+  \frac{\grad E(\x+\varepsilon\vct)-\grad E(\x-\varepsilon\vct)}{2\varepsilon}
+  \approx
+  \Kmat_b(\x)\vct.
+  \label{eq:hessian-test}
+\end{equation}
+This is the most important implementation test.  It checks the complete Hessian without requiring a finite-difference approximation of every matrix entry.
+
+\subsection{Force-Jacobian test}
+
+If the code stores physical force $\mathbf{f}=-\grad E$, verify
+\begin{equation}
+  \frac{\mathbf{f}(\x+\varepsilon\vct)-\mathbf{f}(\x-\varepsilon\vct)}{2\varepsilon}
+  \approx
+  -\Kmat_b\vct.
+\end{equation}
+A frequent error is a globally correct Hessian with the wrong sign in the Newton system.
+
+\subsection{Symmetry test}
+
+Compute
+\begin{equation}
+  \eta_{\mathrm{sym}}
+  =\frac{\|\Kmat_b-\Kmat_b^\T\|_F}
+         {\max(1,\|\Kmat_b\|_F)}.
+\end{equation}
+For a double-precision analytic or AD Hessian, $\eta_{\mathrm{sym}}$ should typically be near $10^{-12}$ to $10^{-14}$, depending on mesh conditioning and assembly order.
+
+\subsection{Translation invariance}
+
+The energy is invariant under translation.  For each Cartesian basis vector $\mathbf{e}_\alpha$, define a global translation direction
+\begin{equation}
+  \vct_{\mathrm{tr},\alpha}
+  =(\mathbf{e}_\alpha,\ldots,\mathbf{e}_\alpha).
+\end{equation}
+Then
+\begin{equation}
+  \grad E^\T\vct_{\mathrm{tr},\alpha}=0,
+  \qquad
+  \Kmat_b\vct_{\mathrm{tr},\alpha}=\zero.
+\end{equation}
+The second identity holds because the translation path is affine and the energy is exactly constant along it.
+
+\subsection{Rotation check and its caveat}
+
+The energy is invariant under rigid rotation, but the infinitesimal rotational direction $\delta\x=\bm{\omega}\times\x$ is not an affine exact rotation path at second order.  Away from equilibrium, one should not expect $\Kmat_b\delta\x=0$ by itself.  At a critical configuration where $\grad E=0$, the three rotational modes become Hessian null modes up to numerical error.
+
+\subsection{Local formula cross-check}
+
+For each vertex $i$, compare:
+\begin{enumerate}
+  \item the Hessian obtained by second-order AD of the scalar $E_i$; and
+  \item the Hessian from Equation~\eqref{eq:master-hessian}, using AD only to obtain $\aV_i,\mV_i,\Q_i,\Mmat_i$.
+\end{enumerate}
+They should agree to roundoff.  This is a strong algebraic test of the master formula.
+
+\subsection{Normalization cross-check against Mem3DG}
+
+To match the current Mem3DG source, use $\kappa_i=2K_{b,i}$.  Verify that
+\begin{equation}
+  -\grad E_b
+\end{equation}
+matches the existing spontaneous-curvature force before enabling the Hessian in an implicit solver.  First test homogeneous $K_b$ and $H_0=0$, then heterogeneous fields.
+
+\section{Degeneracy, robustness, and solver behavior}
+
+\subsection{Geometric degeneracy}
+
+The formulas contain divisions by
+\begin{equation}
+  \ell_e,
+  \qquad
+  \|\mathbf{c}_f\|=2A_f,
+  \qquad
+  A_i.
+\end{equation}
+A triangle approaching zero area causes normal, dihedral, gradient, and Hessian blow-up.  Do not silently clamp these values inside the differentiated energy unless the regularized energy is intentionally changed.  Better options are:
+\begin{itemize}
+  \item reject invalid Newton trial steps;
+  \item use line search or trust-region step control;
+  \item maintain mesh quality through remeshing outside the derivative evaluation; or
+  \item define and consistently differentiate an explicit regularized energy.
+\end{itemize}
+
+\subsection{Indefinite Newton systems}
+
+The exact Hessian may be indefinite.  Stable nonlinear solves commonly use one of:
+\begin{itemize}
+  \item damped Newton with backtracking line search;
+  \item trust-region Newton;
+  \item an LDL$^\T$ factorization with inertia control;
+  \item a shifted matrix $\Kmat_b+\mu\Id$; or
+  \item a positive-semidefinite approximation for selected terms.
+\end{itemize}
+Do not replace the exact Hessian by its absolute eigenvalue projection without documenting that the method is no longer exact Newton.
+
+\subsection{Caching}
+
+Any cached edge length, face normal, face area, dihedral angle, dual area, or integrated curvature must correspond to the same coordinate state at which the Hessian is evaluated.  A stale geometry cache can pass some energy tests while failing the Hessian directional test.
+
+\section{Gaussian curvature and boundaries}
+
+For a closed mesh with fixed topology and constant Gaussian modulus $\kappa_G$,
+\begin{equation}
+  \sum_i\int K_i
+  =2\pi\chi(\mathcal{M})
+\end{equation}
+is constant by the discrete Gauss--Bonnet theorem.  Therefore
+\begin{equation}
+  \grad E_G=\zero,
+  \qquad
+  \Hess E_G=\zero.
+\end{equation}
+
+This conclusion does not apply when:
+\begin{itemize}
+  \item the mesh has a boundary;
+  \item $\kappa_G$ varies spatially;
+  \item topology changes; or
+  \item the discretization assigns a non-topological Gaussian energy.
+\end{itemize}
+In those cases, the angle-defect and boundary geodesic-curvature terms require their own gradients and Hessians.
+
+\section{Geometry-dependent material fields}
+
+Equation~\eqref{eq:master-hessian} assumes $\kappa_i$ and $c_i$ are fixed during the shape derivative.  This is the correct interpretation when they are independent state variables held fixed in a mechanical Newton solve.
+
+If $\kappa_i=\kappa_i(\x)$ or $c_i=c_i(\x)$, the energy is still
+\begin{equation}
+  E_i=\kappa_iA_i(H_i-c_i)^2,
+\end{equation}
+but the gradient gains
+\begin{equation}
+  A_i(H_i-c_i)^2\grad\kappa_i
+  -2\kappa_iA_i(H_i-c_i)\grad c_i,
+\end{equation}
+and the Hessian gains all product-rule derivatives of these terms.  In a coupled mechanochemical system, it is usually cleaner to assemble the full block Jacobian in variables $(\x,\phi)$ rather than hiding chemical dependence inside a shape-only Hessian.
+
+\section{Dimensional and scaling checks}
+
+With position measured in length units $L$:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Quantity & Dimension & Comment\\
+\midrule
+$A_i$ & $L^2$ & dual area\\
+$M_i$ & $L$ & integrated mean curvature\\
+$H_i,c_i$ & $L^{-1}$ & pointwise curvature\\
+$\kappa_i$ & energy & bending modulus in Equation~\eqref{eq:paper-energy}\\
+$E_i$ & energy & $\kappa_iA_i(H_i-c_i)^2$\\
+$\grad E_i$ & energy/$L$ & force magnitude\\
+$\Hess E_i$ & energy/$L^2$ & stiffness\\
+\bottomrule
+\end{tabular}
+\end{center}
+A uniform scaling $\x\mapsto s\x$ gives $A_i\mapsto s^2A_i$, $M_i\mapsto sM_i$, and $H_i\mapsto H_i/s$.  For $c_i=0$, the pure Willmore part $\sum_i\kappa_iA_iH_i^2$ is scale invariant.  This provides another useful regression check.
+
+\section{Implementation checklist for Codex or a human developer}
+
+\begin{enumerate}
+  \item Confirm whether the code expects the energy Hessian $\Hess E$ or the force Jacobian $-\Hess E$.
+  \item Confirm the energy normalization.  Current Mem3DG source: $\kappa_i=2K_{b,i}$.
+  \item Treat \texttt{vertexMeanCurvatures} as $M_i$, not $H_i$.
+  \item Use a single signed-dihedral convention everywhere.
+  \item Build $A_i$ from one-third of incident face areas.
+  \item Build $M_i$ from one-quarter of $\ell_e\phi_e$ over incident edges.
+  \item Prefer local scalar second-order AD for the first correct implementation.
+  \item If implementing analytically, include both mixed outer products in Equation~\eqref{eq:M-hessian}.
+  \item Assemble duplicate sparse contributions by summation.
+  \item Test energy--gradient consistency.
+  \item Test gradient--Hessian consistency.
+  \item Test symmetry and translation null modes.
+  \item Compare $-\grad E$ against the existing Mem3DG bending force.
+  \item Use line search or trust-region protection against triangle inversion and dihedral branch jumps.
+\end{enumerate}
+
+\section{Concise formula sheet}
+
+For each vertex $i$:
+\begin{align}
+  A_i&=\frac13\sum_{f\ni i}A_f,\\
+  M_i&=\frac14\sum_{e\ni i}\ell_e\phi_e,\\
+  H_i&=\frac{M_i}{A_i},\\
+  E_i&=\kappa_iA_i(H_i-c_i)^2,\\
+  \aV_i&=\grad A_i,
+  &\mV_i&=\grad M_i,\\
+  \Q_i&=\Hess A_i,
+  &\Mmat_i&=\Hess M_i,\\
+  \gV_i&=\mV_i-H_i\aV_i.
+\end{align}
+Then
+\begin{equation}
+  \boxed{
+  \grad E_i
+  =\kappa_i\left[
+    2(H_i-c_i)\mV_i
+    -(H_i^2-c_i^2)\aV_i
+  \right],}
+\end{equation}
+\begin{equation}
+  \boxed{
+  \Hess E_i
+  =\kappa_i\left[
+    \frac{2}{A_i}\gV_i\gV_i^\T
+    +2(H_i-c_i)\Mmat_i
+    -(H_i^2-c_i^2)\Q_i
+  \right],}
+\end{equation}
+and
+\begin{equation}
+  \boxed{
+  \frac{\partial\mathbf{f}_b}{\partial\x}
+  =-\sum_i\Hess E_i.}
+\end{equation}
+
+The primitive integrated-curvature derivatives are
+\begin{equation}
+  \boxed{
+  \mV_i
+  =\frac14\sum_{e\ni i}
+  \left(\phi_e\grad\ell_e+\ell_e\grad\phi_e\right),}
+\end{equation}
+\begin{equation}
+  \boxed{
+  \Mmat_i
+  =\frac14\sum_{e\ni i}
+  \left[
+    \phi_e\Hess\ell_e
+    +\ell_e\Hess\phi_e
+    +(\grad\ell_e)(\grad\phi_e)^\T
+    +(\grad\phi_e)(\grad\ell_e)^\T
+  \right].}
+\end{equation}
+
+\section{References}
+
+\begin{thebibliography}{9}
+
+\bibitem{mem3dg-paper}
+C. Zhu, C. T. Lee, and P. Rangamani,
+``Mem3DG: Modeling membrane mechanochemical dynamics in 3D using discrete differential geometry,''
+\emph{Biophysical Reports}, vol. 2, 100062, 2022.
+\url{https://doi.org/10.1016/j.bpr.2022.100062}
+
+\bibitem{mem3dg-repo}
+RangamaniLabUCSD,
+``Mem3DG: 3D computational model for lipid membranes,''
+source repository.
+\url{https://github.com/RangamaniLabUCSD/Mem3DG}
+
+\bibitem{tamstorf-grinspun}
+R. Tamstorf and E. Grinspun,
+``Discrete bending forces and their Jacobians,''
+\emph{Graphical Models}, vol. 75, no. 6, pp. 362--370, 2013.
+
+\bibitem{crane-ddg}
+K. Crane, F. de Goes, M. Desbrun, and P. Schroeder,
+``Digital Geometry Processing with Discrete Exterior Calculus,''
+SIGGRAPH Course Notes, 2013.
+
+\end{thebibliography}
+
+\end{document}

@@ -45,7 +45,7 @@ if ~isfield(p, 'Sd')
     p.Sd = 1;
 end
 if ~isfield(p, 'Da')
-    p.Da = 1;
+    p.Da = 1; disp("Da not given, using Da=1")
 end
 if ~isfield(p, 'Gamma')
     p.Gamma = 0;
@@ -57,7 +57,13 @@ if ~isfield(p, 'chi')
     p.chi = 0.1;
 end
 if ~isfield(p, 'precondition_system')
-    p.precondition_system = false;
+    p.precondition_system = true;
+end
+if ~isfield(p, 'project_dP_translation')
+    p.project_dP_translation = false;
+end
+if ~isfield(p, 'bending_hessian_mode')
+    p.bending_hessian_mode = "exact";
 end
 if ~isfield(p, 'line_search')
     p.line_search = true;
@@ -100,11 +106,13 @@ if start == 0
         M = loaded.M;
     else
         [P, M] = subdivided_sphere(p.subdivisions);
-        %P(:,3) = P(:,3)*2;
+        
+        P(:,3) = 2*P(:,3);
     end
 
     geo = Geometry(M, P);
     if p.initial_remesh && hasRemesher
+        disp('Remeshing at start')
         [M, P] = remeshing(int32(M), P, int32([]), mean(geo.he_length), int32(100));
         M = cast(M, "double");
         geo = Geometry(M, P);
@@ -119,7 +127,7 @@ if start == 0
 
     o.h = .01;
     o.eta = 1;
-    o.tol_b = .01;
+    o.tol_b = 1e-9;
     o.tol_c = .01;
     o.tol_d = .01;
     o.tol_f = o.tol_b;
@@ -183,8 +191,9 @@ else
     p.remesh_size = remesh_size;
     override_fields = ["Sd", "Da", "Gamma", "gamy", "chi", ...
         "tol_b", "tol_c", "tol_d", "max_iter", "h", "eta", ...
-        "precondition_system", "line_search", "line_search_tau", ...
-        "line_search_max_iter", "line_search_c", ...
+        "precondition_system", "project_dP_translation", ...
+        "bending_hessian_mode", ...
+        "line_search", "line_search_tau", "line_search_max_iter", "line_search_c", ...
         "line_search_wb", "line_search_wc", "line_search_wd"];
     for override_idx = 1:numel(override_fields)
         field = override_fields(override_idx);
@@ -194,6 +203,12 @@ else
     end
     if ~isfield(p, 'precondition_system')
         p.precondition_system = false;
+    end
+    if ~isfield(p, 'project_dP_translation')
+        p.project_dP_translation = false;
+    end
+    if ~isfield(p, 'bending_hessian_mode')
+        p.bending_hessian_mode = "bih";
     end
     if ~isfield(p, 'line_search')
         p.line_search = false;
@@ -273,9 +288,10 @@ else
     end
 
     %%% OVERRRIDES
-    o.tol_b = .01;
-    % o.tol_c = .03;
-    % o.tol_d = .01;
+    % o.tol_b = 1e-8;
+    % o.tol_c = 1e-7;
+    % o.tol_d = 1e-7;
+    p.bending_hessian_mode = "bih";
 
     %.h = o.h*3;
     %o.eta = 0;
@@ -298,9 +314,8 @@ for t = (start + 1):p.T
     mass0_inv = spdiags(1 ./ geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
     bih = geo.lap * mass0_inv * geo.lap;
     bih = blkdiag(bih, bih, bih);
-    Hess = 2 * (KTK + p.k * DTD) ...
-        + 0.5 * p.dt * bih...
-        + 1e-3 * r.edge_length^(-2) * blkdiag(mass0, mass0, mass0);
+    hess_base = 2 * (KTK + p.k * DTD);
+    hess_regularization = 0* r.edge_length^(-2) * blkdiag(mass0, mass0, mass0);
 
 
 
@@ -327,6 +342,7 @@ for t = (start + 1):p.T
     eps_b_prev = Inf;
     eps_b_rise_count = 0;
     j = 0;
+    ls_iter = 0;
     alpha_mem = 1;
 
 
@@ -334,7 +350,7 @@ for t = (start + 1):p.T
     n_state = numel(P);
     M3 = blkdiag(mass0, mass0, mass0);
     I_state = speye(n_state);
-    bie_df = p.Sd * (S + p.Da * N);
+    bie_df = p.Sd * (S - p.Da * N);
     % full_Jac = [
     %     Hess,              -p.dt * M3;
     %     -I_state / p.dt,    bie_df
@@ -353,7 +369,7 @@ for t = (start + 1):p.T
 
     % to here
 
-    while ((eps_b > o.tol_b) || (eps_c > o.tol_c) || (eps_d > o.tol_d)) || (ls_iter < p.line_search_max_iter) && (j < o.max_iter)
+    while ((eps_b > o.tol_b) || (eps_c > o.tol_c) || (eps_d > o.tol_d)) || (ls_iter > p.line_search_max_iter) && (j < o.max_iter)
 
         f_nodal = traction_to_nodal(f, geo);
         %fb = reshape(-.5*bih*P(:),size(P));
@@ -362,10 +378,10 @@ for t = (start + 1):p.T
         u = reshape((P(:) - P0) / p.dt, size(P));
         fv = reshape(-2 * (KTK + p.k * DTD) * u(:), size(P));
         fs = reshape(lambda * twoHn, size(P));
-        b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p,bih);
+        b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
         P_bie = reshape(P0, [], 3);
         geo_bie = Geometry(M, P_bie);
-        u_background = shear_flow(P_bie, p.gamy);
+        u_background = shearextensionflow(P_bie, p.gamy);
         c = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
 
 
@@ -388,6 +404,8 @@ for t = (start + 1):p.T
 
         % Codex: only add stuff in these bounds...
 
+        Hess = hess_base + p.dt * bending_hessian_for_solver(geo, bih, p) ...
+            + hess_regularization;
         d = (geo.area - p.area0) / p.area0;
         area_gradient = geo.lap * P;
         area_gradient = area_gradient(:);
@@ -424,6 +442,9 @@ for t = (start + 1):p.T
         end
 
         dP = full_gamma_step(1:n_state);
+        if p.project_dP_translation
+            dP = remove_translation_step(dP, geo.v_area);
+        end
         df = reshape(full_gamma_step((n_state + 1):(2 * n_state)), size(P));
         dlambda = full_gamma_step(end);
         if p.line_search
@@ -445,7 +466,7 @@ for t = (start + 1):p.T
                 f_trial = f_base + alpha * df;
                 lambda_trial = lambda_base + alpha * dlambda;
                 phi_trial = residual_merit(P_trial, P0, M, f_trial, lambda_trial, ...
-                    KTK, DTD, P_bie, geo_bie, u_background, slp_cache, p, bih);
+                    KTK, DTD, P_bie, geo_bie, u_background, slp_cache, p);
 
                 if phi_trial < best_phi
                     best_phi = phi_trial;
@@ -500,7 +521,7 @@ for t = (start + 1):p.T
         darea = geo.area - p.area0;
         eps_d = abs(darea) / p.area0;
         lambda = lambda - o.eta * darea;
-        b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p,bih);
+        b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
         eps_b_raw = norm(b_res(:)) / sqrt(numel(b_res));
         eps_b = eps_b_raw;%/ max(u_rms, 1e-14);
 
@@ -536,7 +557,6 @@ for t = (start + 1):p.T
             eps_b_rise_count = 0;
         end
         eps_b_prev = eps_b;
-
         j = j + 1;
     end
 
@@ -551,7 +571,7 @@ for t = (start + 1):p.T
     [P, velocity] = rm_rigid_patched(P, (P(:) - P0) / p.dt, geo.v_area,"translation");
     geo = Geometry(M, P);
 
-    if hasRemesher && deformation_criterion(geo)
+    if 0 %hasRemesher && deformation_criterion(geo)
         geo_pre = geo;
         if ~supress_outputs
             fprintf("Remeshing. t = %d \n", t);
@@ -577,6 +597,17 @@ for t = (start + 1):p.T
     end
 end
 
+function bending_hess = bending_hessian_for_solver(geo, bih, p)
+    mode = lower(string(p.bending_hessian_mode));
+    if mode == "bih" || mode == "approx" || mode == "cotan_bih"
+        bending_hess = 0.5 * bih;
+    elseif mode == "exact" || mode == "analytic"
+        bending_hess = geo.bending_hessian(1);
+    else
+        error("Unknown bending_hessian_mode '%s'. Use 'bih' or 'exact'.", char(mode));
+    end
+end
+
 function [velocity, f] = map_data(geo, geo_pre, velocity_pre, f_pre)
     kdtree = KDTreeSearcher(geo_pre.f_center);
     [face, uv, ~, fail] = project(geo_pre.V, geo_pre.F, geo.V, kdtree, 6);
@@ -590,12 +621,12 @@ end
 
 function c_res = bie_residual(P, M, f, geo, u, u_background, slp_cache, p) %takes in  traction f, returns traction c
     slpout = stokeslet_SLP_triangle(P, M, f, slp_cache);
-    normal_slip = p.Gamma - dot(f, geo.v_normal, 2);
+    normal_slip = p.Gamma + dot(f, geo.v_normal, 2);
     c_res = - u + u_background + p.Sd * slpout - p.Sd*p.Da*normal_slip.*geo.v_normal;
 end
 
 function b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, ...
-        p,bih) % takes in traction f, returns nodal b_res
+        p) % takes in traction f, returns nodal b_res
     geo = Geometry(M, P);
     f_nodal = traction_to_nodal(f, geo);
     %fb = reshape(-.5*bih*P(:),size(P));
@@ -609,10 +640,10 @@ function b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, ...
 end
 
 function phi = residual_merit(P, P0, M, f, lambda, KTK, DTD, ...
-        P_bie, geo_bie, u_background, slp_cache, p, bih)
+        P_bie, geo_bie, u_background, slp_cache, p)
     geo = Geometry(M, P);
     u = reshape((P(:) - P0) / p.dt, size(P));
-    b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p, bih);
+    b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
     c_res = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
     d_res = (geo.area - p.area0) / p.area0;
     phi = residual_merit_from_parts(b_res, c_res, d_res, p);
@@ -625,6 +656,13 @@ function phi = residual_merit_from_parts(b_res, c_res, d_res, p)
     phi = 0.5 * (p.line_search_wb * eps_b_merit^2 ...
         + p.line_search_wc * eps_c_merit^2 ...
         + p.line_search_wd * eps_d_merit^2);
+end
+
+function dP = remove_translation_step(dP, v_area)
+    dP_mat = reshape(dP, [], 3);
+    v_area = v_area(:);
+    translation = sum(dP_mat .* v_area, 1) / sum(v_area);
+    dP = reshape(dP_mat - translation, [], 1);
 end
 
 function nodal = traction_to_nodal(traction, geo)

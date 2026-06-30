@@ -4,11 +4,11 @@ close all; clc; clear;
 % Override run_tag/directory/name before running if needed.
 
 dt = 1e-1;
-k = 10000;
-Sd = 10;
-Da = 10;
+k = 1000;
+Sd = 1000;
+Da = 1e-2;
 Gamma = 0;
-gamy = 4.4;
+gamy = 0;
 
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e', Sd, Da, gamy);
 run_tag = strrep(run_tag, '+', 'p');
@@ -47,7 +47,7 @@ if ~exist('velocity_color', 'var')
     velocity_color = 'k';
 end
 if ~exist('color_mode', 'var')
-    color_mode = "curvature";
+    color_mode = "permeation";
 end
 if ~exist('uniform_color', 'var')
     uniform_color = [0.75, 0.78, 0.82];
@@ -76,6 +76,9 @@ if plot_ids(end) ~= tf
 end
 plot_ids = unique(plot_ids, 'stable');
 
+geoj = load(fullfile(folder, sprintf("geo%d.mat", 0)));
+geo = Geometry(geoj.M, geoj.P);
+volume0 = geo.volume;
 geoj = load(fullfile(folder, sprintf("geo%d.mat", tf)));
 geo = Geometry(geoj.M, geoj.P);
 view_rotation = make_view_rotation(view_rotation_angle_deg, view_rotation_axis, view_rotation_center);
@@ -156,7 +159,7 @@ gif_frame_count = 0;
 
 %%% OVERRIDE
 
-plot_ids = 1:tf;
+%plot_ids = 0:1:2;
 
 
 for frame_idx = 1:numel(plot_ids)
@@ -164,7 +167,10 @@ for frame_idx = 1:numel(plot_ids)
     geoj = load(fullfile(folder, sprintf("geo%d.mat", n)));
     geo = Geometry(geoj.M, geoj.P);
     P_view = apply_view_rotation(geoj.P, view_rotation);
-    disp((geo.volume - 4/3*pi)/(4/3*pi));
+
+    %disp((geo.volume - 4/3*pi)/(4/3*pi));
+    fprintf("Volume: %.9f\n", geo.volume/volume0);
+
     if ~use_uniform_color
         C = frame_color_data(geoj, geo, color_mode, gamy);
     end
