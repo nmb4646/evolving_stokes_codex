@@ -5,10 +5,12 @@ close all; clc; clear;
 
 dt = 1e-1;
 k = 1000;
-Sd = 1000;
-Da = 1e-2;
+Sd = 1200;
+Da = 1e-5;
 Gamma = 0;
 gamy = 0;
+
+override_ids = [1:10];
 
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e', Sd, Da, gamy);
 run_tag = strrep(run_tag, '+', 'p');
@@ -47,7 +49,7 @@ if ~exist('velocity_color', 'var')
     velocity_color = 'k';
 end
 if ~exist('color_mode', 'var')
-    color_mode = "permeation";
+    color_mode = "curvature";
 end
 if ~exist('uniform_color', 'var')
     uniform_color = [0.75, 0.78, 0.82];
@@ -159,7 +161,9 @@ gif_frame_count = 0;
 
 %%% OVERRIDE
 
-%plot_ids = 0:1:2;
+if ~isempty(override_ids)
+plot_ids = override_ids;
+end
 
 
 for frame_idx = 1:numel(plot_ids)

@@ -62,6 +62,9 @@ end
 if ~isfield(p, 'project_dP_translation')
     p.project_dP_translation = false;
 end
+if ~isfield(p, 'conserve_slp_volume')
+    p.conserve_slp_volume = true;
+end
 if ~isfield(p, 'bending_hessian_mode')
     p.bending_hessian_mode = "exact";
 end
@@ -107,7 +110,7 @@ if start == 0
     else
         [P, M] = subdivided_sphere(p.subdivisions);
         
-        P(:,3) = 2*P(:,3);
+        P(:,3) = 1.1*P(:,3);
     end
 
     geo = Geometry(M, P);
@@ -127,8 +130,8 @@ if start == 0
 
     o.h = .01;
     o.eta = 1;
-    o.tol_b = 1e-9;
-    o.tol_c = .01;
+    o.tol_b = 1e-6;
+    o.tol_c = 1e-10;
     o.tol_d = .01;
     o.tol_f = o.tol_b;
     o.max_iter = 10000;
@@ -177,6 +180,7 @@ if start == 0
 else
     p_input = p;
     dt_override = p.dt;
+    k_override = p.k;
     remesh_size = p.remesh_size;
     load(sprintf("%sgeo%d.mat", dir, start), "M", "P", "velocity", "lambda", "p", "o", "r");
     if exist(sprintf("%sgeo%d.mat", dir, start), "file")
@@ -188,10 +192,12 @@ else
         end
     end
     p.dt = dt_override;
+    p.k = k_override;
     p.remesh_size = remesh_size;
     override_fields = ["Sd", "Da", "Gamma", "gamy", "chi", ...
         "tol_b", "tol_c", "tol_d", "max_iter", "h", "eta", ...
         "precondition_system", "project_dP_translation", ...
+        "conserve_slp_volume", ...
         "bending_hessian_mode", ...
         "line_search", "line_search_tau", "line_search_max_iter", "line_search_c", ...
         "line_search_wb", "line_search_wc", "line_search_wd"];
@@ -206,6 +212,9 @@ else
     end
     if ~isfield(p, 'project_dP_translation')
         p.project_dP_translation = false;
+    end
+    if ~isfield(p, 'conserve_slp_volume')
+        p.conserve_slp_volume = false;
     end
     if ~isfield(p, 'bending_hessian_mode')
         p.bending_hessian_mode = "bih";
@@ -304,7 +313,7 @@ end
 
 for t = (start + 1):p.T
     tic;
-
+    
     [~, ~, ~, ~, KTK, DTD] = geo.evolving_operators();
     P0 = P(:);
     lambda_restart = lambda;
@@ -330,6 +339,9 @@ for t = (start + 1):p.T
 
 
     S = stokeslet_SLP_triangle_matrix(P, M, slp_cache);
+    if p.conserve_slp_volume
+        S = project_slp_matrix_zero_flux(S, geo);
+    end
     N = normal_projection_matrix(geo.v_normal);
     NN = blkdiag(mass0, mass0, mass0) * N;
 
@@ -350,7 +362,7 @@ for t = (start + 1):p.T
     n_state = numel(P);
     M3 = blkdiag(mass0, mass0, mass0);
     I_state = speye(n_state);
-    bie_df = p.Sd * (S - p.Da * N);
+    bie_df = -p.Sd * (S + p.Da * N);
     % full_Jac = [
     %     Hess,              -p.dt * M3;
     %     -I_state / p.dt,    bie_df
@@ -586,7 +598,7 @@ for t = (start + 1):p.T
     end
 
     geo = Geometry(M, P);
-    P = P * sqrt(p.area0 / geo.area);
+    %P = P * sqrt(p.area0 / geo.area);
     geo = Geometry(M, P);
     fb = geo.bending_force(1);
 
@@ -621,8 +633,11 @@ end
 
 function c_res = bie_residual(P, M, f, geo, u, u_background, slp_cache, p) %takes in  traction f, returns traction c
     slpout = stokeslet_SLP_triangle(P, M, f, slp_cache);
+    if p.conserve_slp_volume
+        slpout = project_velocity_zero_flux(slpout, geo);
+    end
     normal_slip = p.Gamma + dot(f, geo.v_normal, 2);
-    c_res = - u + u_background + p.Sd * slpout - p.Sd*p.Da*normal_slip.*geo.v_normal;
+    c_res = - u + u_background - p.Sd * slpout - p.Sd*p.Da*normal_slip.*geo.v_normal;
 end
 
 function b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, ...
@@ -663,6 +678,33 @@ function dP = remove_translation_step(dP, v_area)
     v_area = v_area(:);
     translation = sum(dP_mat .* v_area, 1) / sum(v_area);
     dP = reshape(dP_mat - translation, [], 1);
+end
+
+function S = project_slp_matrix_zero_flux(S, geo)
+    q = volume_flux_vector(geo);
+    r = geo.v_normal(:);
+    denom = q.' * r;
+    if abs(denom) < eps
+        warning("Skipping SLP volume projection because the normal-flux denominator is too small.");
+        return
+    end
+    flux_row = (sparse(q).' * S) / denom;
+    S = S - sparse(r) * flux_row;
+end
+
+function u = project_velocity_zero_flux(u, geo)
+    flux = sum(dot(u, geo.v_normal, 2) .* geo.v_area);
+    denom = sum(sum(geo.v_normal .^ 2, 2) .* geo.v_area);
+    if abs(denom) < eps
+        warning("Skipping SLP volume projection because the normal-flux denominator is too small.");
+        return
+    end
+    u = u - (flux / denom) * geo.v_normal;
+end
+
+function q = volume_flux_vector(geo)
+    q_mat = geo.v_area .* geo.v_normal;
+    q = q_mat(:);
 end
 
 function nodal = traction_to_nodal(traction, geo)

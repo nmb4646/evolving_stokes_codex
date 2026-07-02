@@ -107,7 +107,7 @@ if start == 0
     else
         [P, M] = subdivided_sphere(p.subdivisions);
         
-        P(:,3) = 2*P(:,3);
+        P(:,3) = 1.1*P(:,3);
     end
 
     geo = Geometry(M, P);
@@ -127,7 +127,7 @@ if start == 0
 
     o.h = .01;
     o.eta = 1;
-    o.tol_b = 1e-7;
+    o.tol_b = 1e-10;
     o.tol_c = .01;
     o.tol_d = .01;
     o.tol_f = o.tol_b;
@@ -177,6 +177,7 @@ if start == 0
 else
     p_input = p;
     dt_override = p.dt;
+    k_override = p.k;
     remesh_size = p.remesh_size;
     load(sprintf("%sgeo%d.mat", dir, start), "M", "P", "velocity", "lambda", "p", "o", "r");
     if exist(sprintf("%sgeo%d.mat", dir, start), "file")
@@ -188,6 +189,7 @@ else
         end
     end
     p.dt = dt_override;
+    p.k = k_override;
     p.remesh_size = remesh_size;
     override_fields = ["Sd", "Da", "Gamma", "gamy", "chi", ...
         "tol_b", "tol_c", "tol_d", "max_iter", "h", "eta", ...
@@ -288,9 +290,9 @@ else
     end
 
     %%% OVERRRIDES
-    o.tol_b = 1e-7;
-    o.tol_c = 1e-7;
-    o.tol_d = 1e-7;
+    % o.tol_b = 1e-8;
+    % o.tol_c = 1e-7;
+    % o.tol_d = 1e-7;
     p.bending_hessian_mode = "bih";
 
     %.h = o.h*3;
@@ -304,7 +306,7 @@ end
 
 for t = (start + 1):p.T
     tic;
-
+    
     [~, ~, ~, ~, KTK, DTD] = geo.evolving_operators();
     P0 = P(:);
     lambda_restart = lambda;
