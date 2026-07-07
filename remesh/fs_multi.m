@@ -39,7 +39,7 @@ if ~isfield(p, 'remesh_size')
     p.remesh_size = 0;
 end
 if ~isfield(p, 'initial_remesh')
-    p.initial_remesh = false;
+    p.initial_remesh = true;
 end
 if ~isfield(p, 'Sd')
     p.Sd = 1;
@@ -110,7 +110,9 @@ if start == 0
     else
         [P, M] = subdivided_sphere(p.subdivisions);
         
-        P(:,3) = 1.1*P(:,3);
+        stretch_factor = a_from_v(.95);
+
+        P(:,3) = stretch_factor*P(:,3);
     end
 
     geo = Geometry(M, P);
@@ -130,7 +132,7 @@ if start == 0
 
     o.h = .01;
     o.eta = 1;
-    o.tol_b = 1e-6;
+    o.tol_b = 1e-7;
     o.tol_c = 1e-10;
     o.tol_d = .01;
     o.tol_f = o.tol_b;
@@ -179,8 +181,9 @@ if start == 0
     end
 else
     p_input = p;
-    dt_override = p.dt;
+    %dt_override = p.dt;
     k_override = p.k;
+    T_override = p.T; 
     remesh_size = p.remesh_size;
     load(sprintf("%sgeo%d.mat", dir, start), "M", "P", "velocity", "lambda", "p", "o", "r");
     if exist(sprintf("%sgeo%d.mat", dir, start), "file")
@@ -191,8 +194,9 @@ else
             f = zeros(size(P));
         end
     end
-    p.dt = dt_override;
+    %p.dt = dt_override;
     p.k = k_override;
+    p.T = T_override;
     p.remesh_size = remesh_size;
     override_fields = ["Sd", "Da", "Gamma", "gamy", "chi", ...
         "tol_b", "tol_c", "tol_d", "max_iter", "h", "eta", ...
@@ -300,7 +304,7 @@ else
     % o.tol_b = 1e-8;
     % o.tol_c = 1e-7;
     % o.tol_d = 1e-7;
-    p.bending_hessian_mode = "bih";
+    %p.bending_hessian_mode = "bih";
 
     %.h = o.h*3;
     %o.eta = 0;
@@ -393,7 +397,7 @@ for t = (start + 1):p.T
         b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
         P_bie = reshape(P0, [], 3);
         geo_bie = Geometry(M, P_bie);
-        u_background = shearextensionflow(P_bie, p.gamy);
+        u_background = shear_flow(P_bie, p.gamy);%poiseuille_flow(P_bie,p.gamy,12.5);%shear_flow(P_bie, p.gamy);
         c = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
 
 
@@ -737,4 +741,60 @@ function N = normal_projection_matrix(v_normal)
     end
 
     N = sparse(rows, cols, vals, 3 * n_v, 3 * n_v);
+end
+
+
+function a = a_from_v(v)
+% a_from_v  Prolate spheroid aspect ratio from reduced volume.
+%
+%   a = a_from_v(v)
+%
+% Returns the aspect ratio a = c/b >= 1 for a prolate spheroid whose
+% reduced volume is v, using
+%
+%   v = V / ((4*pi/3) * R_A^3),
+%   R_A = sqrt(A/(4*pi)).
+%
+% Valid input:
+%   0 < v <= 1
+%
+% For v = 1, the result is a = 1, the sphere.
+
+    if v <= 0 || v > 1
+        error('v must satisfy 0 < v <= 1.');
+    end
+
+    if abs(v - 1) < 1e-12
+        a = 1;
+        return
+    end
+
+    f = @(a) reduced_volume(a) - v;
+
+    % Find an upper bracket where reduced_volume(a) < v
+    lo = 1;
+    hi = 2;
+
+    while f(hi) > 0
+        hi = 2 * hi;
+    end
+
+    % Solve by bisection/fzero with bracket
+    a = fzero(f, [lo hi]);
+end
+
+
+function v = reduced_volume(a)
+% reduced_volume  Reduced volume of prolate spheroid with aspect ratio a.
+
+    if abs(a - 1) < 1e-12
+        v = 1;
+        return
+    end
+
+    e = sqrt(1 - 1/a^2);
+
+    F = 1 + (a/e) * asin(e);
+
+    v = 2 * sqrt(2) * a / F^(3/2);
 end

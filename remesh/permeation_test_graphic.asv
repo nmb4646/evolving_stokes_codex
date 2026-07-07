@@ -1,7 +1,7 @@
 close all;clear;clc;
 %%% Simulation selection
 % Sd value used in the fs_batch output folder names.
-Sd = [1e2,1e3,1.01e4];
+Sd = [1e2,1e3,1e4];
 
 % Background shear/extension parameter used in the fs_batch output folder names.
 gamy = 0;
@@ -12,7 +12,7 @@ Da_values = 10.^(-10:.5:3);
 
 % Time-step range. If true, use every available geo*.mat frame for each run.
 % If false, use only geo0.mat through geo<maxtimestep>.mat.
-usealltimes = true;
+usealltimes = false;
 maxtimestep = 10;
 
 % Rate denominator. "time" divides by physical time; "timestep" divides by geo frame index.
@@ -106,7 +106,7 @@ visual.rate_sd_color_order = [];            % Optional nSd x 3 RGB colors. Leave
 visual.rate_show_fit = true;
 visual.rate_fit_first_index = 4;             % First sorted valid Da point included in the fit.
 visual.rate_fit_last_index = 10;              % Last sorted valid Da point included in the fit.
-visual.rate_fit_ranges_by_sd = [4,9;4,8;4,7];           % Optional nSd x 2 matrix: row i is [first, last] for Sd_values(i).
+visual.rate_fit_ranges_by_sd = [5,9;3,8;5,7];           % Optional nSd x 2 matrix: row i is [first, last] for Sd_values(i).
 visual.rate_fit_line_color = [0.85, 0.10, 0.10];
 visual.rate_fit_line_style = "-";
 visual.rate_fit_line_width = 2.5;
@@ -318,7 +318,7 @@ if visual.show_rate_scatter
             sd_color_idx = mod(sd_idx - 1, size(sd_colors, 1)) + 1;
             scatter_color = sd_colors(sd_color_idx, :);
             fit_color = scatter_color;
-            scatter_name = sprintf("Sd = %.1g data", Sd_current);
+            scatter_name = sprintf("Sd = %.3g data", Sd_current);
         else
             scatter_color = visual.rate_marker_face_color;
             fit_color = visual.rate_fit_line_color;
@@ -357,7 +357,7 @@ if visual.show_rate_scatter
                     visual.rate_fit_n_plot_points);
                 y_fit = prefactor * x_fit .^ alpha;
                 if multiple_sd
-                    fit_name = sprintf("Sd = %.1g fit: \\alpha = %.3g", Sd_current, alpha);
+                    fit_name = sprintf("Sd = %.3g fit: \\alpha = %.3g", Sd_current, alpha);
                 else
                     fit_name = sprintf("fit: \\alpha = %.3g", alpha);
                 end

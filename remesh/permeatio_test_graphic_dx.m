@@ -1,30 +1,29 @@
 close all;clear;clc;
 %%% Simulation selection
-% Sd value used in the fs_batch output folder names.
-Sd = [1e2,1e3,1.01e4];
+% Three Sd values used only to locate the fs_batch output folders.
+% Plot labels are based on dx = mean(geo.he_length) from each run's geo0.mat.
+Sd = [1e4,9.93e3,1.01e4];
 
 % Background shear/extension parameter used in the fs_batch output folder names.
 gamy = 0;
 
 % Darcy numbers to load and plot on the same axes.
 %Da_values = [1e-12,1e-11,1e-10,1e-9, 1e-8, 4e-8,6e-8, 1e-7, 2e-7,4e-7,6e-7,8e-7];%, 1e-6,2e-6,4e-6,6e-6,8e-6,1e-5, 1e-4, 1e-2];
-Da_values = 10.^(-10:.5:3);
+Da_values = 10.^(-10.5:.5:3);
 
 % Time-step range. If true, use every available geo*.mat frame for each run.
 % If false, use only geo0.mat through geo<maxtimestep>.mat.
-usealltimes = true;
+usealltimes = false;
 maxtimestep = 10;
 
 % Rate denominator. "time" divides by physical time; "timestep" divides by geo frame index.
 rate_time_basis = "timestep";
 
 Sd_values = Sd(:).';
-multiple_sd = numel(Sd_values) > 1;
-if multiple_sd
-    sd_title_text = sprintf("%d Sd values", numel(Sd_values));
-else
-    sd_title_text = sprintf("Sd = %.4g", Sd_values);
+if numel(Sd_values) ~= 3
+    error("permeatio_test_graphic_dx expects exactly three Sd values.");
 end
+dx_title_text = "3 dx values";
 [rate_time_basis, rate_denominator_label, rate_legend_label] = rate_basis_labels(rate_time_basis);
 
 %%% Visual settings
@@ -59,7 +58,7 @@ visual.legend_font_size = 11;
 % Axes labels and title.
 visual.x_label = "Time";
 visual.y_label = "(V - V0) / V0";
-visual.title = sprintf("Relative volume change over time, %s", sd_title_text);
+visual.title = sprintf("Relative volume change over time, %s", dx_title_text);
 
 % Axes scaling and limits. Use [] for automatic limits.
 visual.x_scale = "linear";                   % "linear" or "log".
@@ -91,22 +90,21 @@ visual.rate_line_width = 1.0;
 visual.rate_x_label = "Da";
 visual.rate_y_label = sprintf("(V-V_0/V_0)/%s", rate_denominator_label);
 visual.rate_title = sprintf("Volume-change rate vs permeability, %s", ...
-     sd_title_text);
+     dx_title_text);
 visual.rate_show_grid = true;
 visual.rate_show_box = true;
 visual.rate_x_limits = [];
 visual.rate_y_limits = [];
 visual.rate_save_figure = false;
 visual.rate_output_file = fullfile("data", "permeation_rate_scatter.png");
-visual.rate_sd_color_map = "lines";         % Used to color each Sd group when multiple Sd values are given.
-visual.rate_sd_color_order = [];            % Optional nSd x 3 RGB colors. Leave [] to use visual.rate_sd_color_map.
+visual.rate_dx_color_map = "lines";         % Used to color each dx group.
+visual.rate_dx_color_order = [];            % Optional 3 x 3 RGB colors. Leave [] to use visual.rate_dx_color_map.
 
-% Power-law fit on the rate scatter: Vdot = prefactor * Da^alpha.
-% Fit indices refer to the sorted valid positive Da values used in the scatter.
-visual.rate_show_fit = true;
-visual.rate_fit_first_index = 4;             % First sorted valid Da point included in the fit.
-visual.rate_fit_last_index = 10;              % Last sorted valid Da point included in the fit.
-visual.rate_fit_ranges_by_sd = [4,9;4,8;4,7];           % Optional nSd x 2 matrix: row i is [first, last] for Sd_values(i).
+% This dx comparison script intentionally does not draw fit lines.
+visual.rate_show_fit = false;
+visual.rate_fit_first_index = 4;
+visual.rate_fit_last_index = 10;
+visual.rate_fit_ranges_by_dx = [];
 visual.rate_fit_line_color = [0.85, 0.10, 0.10];
 visual.rate_fit_line_style = "-";
 visual.rate_fit_line_width = 2.5;
@@ -139,14 +137,14 @@ colors = visual.color_order;
 if isempty(colors)
     colors = feval(char(visual.color_map), max(numel(Da_values), 1));
 end
-sd_colors = visual.rate_sd_color_order;
-if isempty(sd_colors)
-    sd_colors = feval(char(visual.rate_sd_color_map), max(numel(Sd_values), 1));
+dx_colors = visual.rate_dx_color_order;
+if isempty(dx_colors)
+    dx_colors = feval(char(visual.rate_dx_color_map), max(numel(Sd_values), 1));
 end
 
-summary = table('Size', [0, 9], ...
-    'VariableTypes', ["double", "double", "double", "double", "double", "double", "double", "double", "double"], ...
-    'VariableNames', ["Sd", "Da", "initial_volume", "final_volume", "final_relative_volume", ...
+summary = table('Size', [0, 10], ...
+    'VariableTypes', ["double", "double", "double", "double", "double", "double", "double", "double", "double", "double"], ...
+    'VariableNames', ["group_id", "dx", "Da", "initial_volume", "final_volume", "final_relative_volume", ...
         "net_dVdt", "mean_dVdt", "net_relative_dVdt", "mean_relative_dVdt"]);
 
 for sd_idx = 1:numel(Sd_values)
@@ -162,8 +160,14 @@ for sd_idx = 1:numel(Sd_values)
         continue
     end
     if time_range.is_capped && frames(end) < time_range.maxtimestep
-        warning("Sd = %.4g, Da = %.4g only reaches geo%d.mat before maxtimestep = %d; rates use the shorter available interval.", ...
-            Sd_current, Da, frames(end), time_range.maxtimestep);
+        warning("Da = %.4g only reaches geo%d.mat before maxtimestep = %d; rates use the shorter available interval.", ...
+            Da, frames(end), time_range.maxtimestep);
+    end
+
+    dx = run_dx(folder);
+    if ~isfinite(dx)
+        warning("Skipping Da = %.4g because dx could not be computed from geo0.mat in %s.", Da, folder);
+        continue
     end
 
     times = zeros(numel(frames), 1);
@@ -206,18 +210,10 @@ for sd_idx = 1:numel(Sd_values)
     end
 
     if visual.show_mean_dVdt_in_legend
-        if multiple_sd
-            display_name = sprintf("Sd = %.3g, Da = %.3g, %s = %.3e", ...
-                Sd_current, Da, rate_legend_label, mean_relative_dVdt);
-        else
-            display_name = sprintf("Da = %.3g, %s = %.3e", Da, rate_legend_label, mean_relative_dVdt);
-        end
+        display_name = sprintf("dx = %.4g, Da = %.3g, %s = %.3e", ...
+            dx, Da, rate_legend_label, mean_relative_dVdt);
     else
-        if multiple_sd
-            display_name = sprintf("Sd = %.3g, Da = %.3g", Sd_current, Da);
-        else
-            display_name = sprintf("Da = %.3g", Da);
-        end
+        display_name = sprintf("dx = %.4g, Da = %.3g", dx, Da);
     end
 
     plot_values = relative_volumes;
@@ -226,13 +222,8 @@ for sd_idx = 1:numel(Sd_values)
         plot_values(plot_values <= 0) = NaN;
     end
 
-    if multiple_sd
-        color_idx = mod(sd_idx - 1, size(sd_colors, 1)) + 1;
-        line_color = sd_colors(color_idx, :);
-    else
-        color_idx = mod(k - 1, size(colors, 1)) + 1;
-        line_color = colors(color_idx, :);
-    end
+    color_idx = mod(sd_idx - 1, size(dx_colors, 1)) + 1;
+    line_color = dx_colors(color_idx, :);
     if visual.show_time_plot
         style_idx = mod(k - 1, numel(visual.line_styles)) + 1;
         plot(times, plot_values, ...
@@ -244,7 +235,7 @@ for sd_idx = 1:numel(Sd_values)
             "DisplayName", display_name);
     end
 
-    summary(end + 1, :) = {Sd_current, Da, volumes(1), volumes(end), relative_volumes(end), ...
+    summary(end + 1, :) = {sd_idx, dx, Da, volumes(1), volumes(end), relative_volumes(end), ...
         net_dVdt, mean_dVdt, net_relative_dVdt, mean_relative_dVdt}; %#ok<SAGROW>
     end
 end
@@ -304,26 +295,20 @@ if visual.show_rate_scatter
         box off;
     end
 
-    for sd_idx = 1:numel(Sd_values)
-        Sd_current = Sd_values(sd_idx);
-        sd_group = summary.Sd == Sd_current;
-        valid_rate = valid_rate_all & sd_group;
+    for dx_idx = 1:numel(Sd_values)
+        dx_group = summary.group_id == dx_idx;
+        valid_rate = valid_rate_all & dx_group;
         if ~any(valid_rate)
-            warning("Skipping rate scatter for Sd = %.4g because no positive log-log points are available.", ...
-                Sd_current);
+            warning("Skipping rate scatter for dx group %d because no positive log-log points are available.", ...
+                dx_idx);
             continue
         end
 
-        if multiple_sd
-            sd_color_idx = mod(sd_idx - 1, size(sd_colors, 1)) + 1;
-            scatter_color = sd_colors(sd_color_idx, :);
-            fit_color = scatter_color;
-            scatter_name = sprintf("Sd = %.1g data", Sd_current);
-        else
-            scatter_color = visual.rate_marker_face_color;
-            fit_color = visual.rate_fit_line_color;
-            scatter_name = "data";
-        end
+        group_dx = mean(summary.dx(valid_rate), "omitnan");
+        dx_color_idx = mod(dx_idx - 1, size(dx_colors, 1)) + 1;
+        scatter_color = dx_colors(dx_color_idx, :);
+        fit_color = scatter_color;
+        scatter_name = sprintf("dx = %.4g", group_dx);
 
         scatter(summary.Da(valid_rate), rate_values(valid_rate), ...
             visual.rate_marker_size, ...
@@ -338,7 +323,7 @@ if visual.show_rate_scatter
             fit_rate_all = rate_values(valid_rate);
             [fit_Da_all, fit_order] = sort(fit_Da_all);
             fit_rate_all = fit_rate_all(fit_order);
-            [first_fit, last_fit] = fit_index_range_for_sd(visual, sd_idx, numel(fit_Da_all));
+            [first_fit, last_fit] = fit_index_range_for_dx(visual, dx_idx, numel(fit_Da_all));
             n_fit = last_fit - first_fit + 1;
 
             if n_fit >= 2
@@ -356,27 +341,18 @@ if visual.show_rate_scatter
                 x_fit = logspace(log10(min(fit_Da)), log10(max(fit_Da)), ...
                     visual.rate_fit_n_plot_points);
                 y_fit = prefactor * x_fit .^ alpha;
-                if multiple_sd
-                    fit_name = sprintf("Sd = %.1g fit: \\alpha = %.3g", Sd_current, alpha);
-                else
-                    fit_name = sprintf("fit: \\alpha = %.3g", alpha);
-                end
+                fit_name = sprintf("dx = %.4g fit: \\alpha = %.3g", group_dx, alpha);
                 plot(x_fit, y_fit, ...
                     "Color", fit_color, ...
                     "LineStyle", visual.rate_fit_line_style, ...
                     "LineWidth", visual.rate_fit_line_width, ...
                     "DisplayName", fit_name);
 
-                if multiple_sd
-                    fprintf("Sd = %.6g power-law fit using sorted Da indices %d:%d: Vdot = %.6g * Da^%.6g, R^2 = %.6g\n", ...
-                        Sd_current, first_fit, last_fit, prefactor, alpha, r_squared);
-                else
-                    fprintf("Power-law fit using sorted Da indices %d:%d: Vdot = %.6g * Da^%.6g, R^2 = %.6g\n", ...
-                        first_fit, last_fit, prefactor, alpha, r_squared);
-                end
+                fprintf("dx = %.6g power-law fit using sorted Da indices %d:%d: Vdot = %.6g * Da^%.6g, R^2 = %.6g\n", ...
+                    group_dx, first_fit, last_fit, prefactor, alpha, r_squared);
             else
-                warning("Skipping power-law fit for Sd = %.4g because the selected sorted Da index range contains fewer than 2 points.", ...
-                    Sd_current);
+                warning("Skipping power-law fit for dx = %.4g because the selected sorted Da index range contains fewer than 2 points.", ...
+                    group_dx);
             end
         end
     end
@@ -403,11 +379,7 @@ if visual.show_rate_scatter
     end
 end
 
-if multiple_sd
-    disp(summary);
-else
-    disp(removevars(summary, "Sd"));
-end
+disp(removevars(summary, "group_id"));
 
 function [rate_time_basis, denominator_label, legend_label] = rate_basis_labels(rate_time_basis)
     rate_time_basis = lower(string(rate_time_basis));
@@ -446,19 +418,19 @@ function [frames, time_range] = apply_time_range(frames, usealltimes, maxtimeste
     end
 end
 
-function [first_fit, last_fit] = fit_index_range_for_sd(visual, sd_idx, n_points)
-    if isempty(visual.rate_fit_ranges_by_sd)
+function [first_fit, last_fit] = fit_index_range_for_dx(visual, dx_idx, n_points)
+    if isempty(visual.rate_fit_ranges_by_dx)
         first_fit = visual.rate_fit_first_index;
         last_fit = visual.rate_fit_last_index;
     else
-        if size(visual.rate_fit_ranges_by_sd, 2) ~= 2
-            error("visual.rate_fit_ranges_by_sd must be an nSd x 2 matrix of [first, last] fit indices.");
+        if size(visual.rate_fit_ranges_by_dx, 2) ~= 2
+            error("visual.rate_fit_ranges_by_dx must be a 3 x 2 matrix of [first, last] fit indices.");
         end
-        if sd_idx > size(visual.rate_fit_ranges_by_sd, 1)
-            error("visual.rate_fit_ranges_by_sd has fewer rows than the number of Sd values.");
+        if dx_idx > size(visual.rate_fit_ranges_by_dx, 1)
+            error("visual.rate_fit_ranges_by_dx has fewer rows than the number of dx groups.");
         end
-        first_fit = visual.rate_fit_ranges_by_sd(sd_idx, 1);
-        last_fit = visual.rate_fit_ranges_by_sd(sd_idx, 2);
+        first_fit = visual.rate_fit_ranges_by_dx(dx_idx, 1);
+        last_fit = visual.rate_fit_ranges_by_dx(dx_idx, 2);
     end
 
     first_fit = max(1, first_fit);
@@ -472,6 +444,18 @@ function message = no_frames_message(Da, folder, time_range)
     else
         message = sprintf("No geo*.mat files found for Da = %.4g in %s", Da, folder);
     end
+end
+
+function dx = run_dx(folder)
+    geo0_file = fullfile(folder, "geo0.mat");
+    if ~isfile(geo0_file)
+        dx = NaN;
+        return
+    end
+
+    data = load(geo0_file, "M", "P");
+    geo0 = Geometry(data.M, data.P);
+    dx = mean(geo0.he_length);
 end
 
 function run_tag = make_run_tag(Sd, Da, gamy)

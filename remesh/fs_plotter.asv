@@ -9,9 +9,9 @@ Gamma = 0;
 
 Sd = 1e-3;
 Da = 0;
-gamy =1e-2;
+gamy = 1;
 
-plot_stride = 5;
+
 
 override_ids = [];
 
@@ -37,7 +37,7 @@ edge_color = [.3, .3, .3];
 gif_delay = 1/2;
 size_x = 1000;
 size_y = 900;
-
+plot_stride = 5;
 
 if ~exist('show_velocity', 'var')
     show_velocity = true;
@@ -52,7 +52,7 @@ if ~exist('velocity_color', 'var')
     velocity_color = 'k';
 end
 if ~exist('color_mode', 'var')
-    color_mode = "permeation";
+    color_mode = "curvature";
 end
 if ~exist('uniform_color', 'var')
     uniform_color = [0.75, 0.78, 0.82];
@@ -175,13 +175,11 @@ for frame_idx = 1:numel(plot_ids)
     geo = Geometry(geoj.M, geoj.P);
     P_view = apply_view_rotation(geoj.P, view_rotation);
 
-    tilt_out = vesicleTiltDeformation(geoj.P,geoj.M,1,3);
-    disp("Tilt angle: " + tilt_out.psi/pi)
-    
-    disp("Deformation index:" + tilt_out.D)
+    %tilt_out = vesicleTiltDeformation(geoj.P,geoj.M,1,3);
+    %disp(tilt_out.psi/pi)
 
     %disp((geo.volume - 4/3*pi)/(4/3*pi));
-    %fprintf("Volume: %.9f\n", geo.volume/volume0);
+    fprintf("Volume: %.9f\n", geo.volume/volume0);
 
     if ~use_uniform_color
         C = frame_color_data(geoj, geo, color_mode, gamy);
