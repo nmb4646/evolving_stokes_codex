@@ -4,10 +4,10 @@ close all; clc;
 % Edit these values to select runs from data/fs_batch_data.
 Da = 0;
 Sd = 1e-3;
-gamy = [1.01e-4,3.01e-4,1.01e-3,3.01e-3,1.01e-2];
+gamy = [1.1e4,1.1e3,1.1e-2];
 
 % First geo timestep to include. Use 0 to include geo0.mat.
-time_start = 1;
+time_start = 2;
 
 %%% Tilt calculation
 % For shear_flow.m, u_x = gamy * z, so flow_dim = 1 and grad_dim = 3.
@@ -21,15 +21,14 @@ tilt_options.unwrap = false;
 
 %%% Visual settings
 % Options: "tilt", "D", or ["tilt", "D"].
-visual.metrics = ["tilt", "D"];
+visual.metrics = ["tilt"], "D"];
 % Options: "over_pi" matches fs_plotter, "radians", or "degrees".
 visual.angle_units = "over_pi";
 visual.line_width = 2.0;
 visual.marker = "none";
 visual.marker_size = 5;
 visual.figure_position = [140, 140, 900, 560];
-visual.scale_time_by_gamy = true; % If true, plot t_scaled = t * gamy_current.
-visual.x_scale = "linear"; % Options: "linear" or "log".
+visual.x_scale = "log"; % Options: "linear" or "log".
 visual.y_scale = "linear"; % Options: "linear" or "log".
 visual.show_grid = true;
 visual.save_figure = false;
@@ -74,14 +73,6 @@ for gamy_idx = 1:numel(gamy_values)
 
     [x, x_label_current, tilt, D] = load_tilt_deformation_series(folder, flow_dim, grad_dim, ...
         axis_length_method, tilt_options, time_start);
-    if visual.scale_time_by_gamy
-        x = x * gamy_current;
-        if x_label_current == "Time"
-            x_label_current = "Scaled time (gamy t)";
-        else
-            x_label_current = "Scaled timestep (gamy n)";
-        end
-    end
 
     if strlength(x_label) == 0
         x_label = x_label_current;

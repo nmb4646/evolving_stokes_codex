@@ -9,9 +9,9 @@ Gamma = 0;
 
 Sd = 1e-3;
 Da = 0;
-gamy =1e-2;
+gamy =3.31e-3;
 
-plot_stride = 5;
+plot_stride = 1;
 
 override_ids = [];
 
@@ -34,7 +34,13 @@ view_rotation_axis = [0, 1, 0];
 view_rotation_center = [0, 0, 0];
 alph = .9;
 edge_color = [.3, .3, .3];
-gif_delay = 1/2;
+lighting_options.enabled = true;
+lighting_options.face_lighting = 'gouraud'; % Options: 'none', 'flat', or 'gouraud'.
+lighting_options.ambient_strength = 0.35;
+lighting_options.diffuse_strength = 0.75;
+lighting_options.specular_strength = 0.08;
+lighting_options.specular_exponent = 12;
+gif_delay = 1/14;
 size_x = 1000;
 size_y = 900;
 
@@ -51,11 +57,54 @@ end
 if ~exist('velocity_color', 'var')
     velocity_color = 'k';
 end
+if ~exist('show_streamlines', 'var')
+    show_streamlines = false; % Instantaneous streamlines of tangential velocity on the surface.
+end
+if ~exist('streamline_seed_count', 'var')
+    streamline_seed_count = 40; % Number of streamline seeds per frame.
+end
+if ~exist('streamline_steps', 'var')
+    streamline_steps = 60; % Integration steps in each direction from each seed.
+end
+if ~exist('streamline_step_size', 'var')
+    streamline_step_size = 0.35; % Step length as a multiple of mean mesh edge length.
+end
+if ~exist('streamline_surface_offset', 'var')
+    streamline_surface_offset = 0.02; % Normal offset as a multiple of mean mesh edge length.
+end
+if ~exist('streamline_projection_neighbors', 'var')
+    streamline_projection_neighbors = 12; % Nearby faces searched while projecting traced points.
+end
+if ~exist('streamline_line_width', 'var')
+    streamline_line_width = 1.75;
+end
+if ~exist('streamline_color', 'var')
+    streamline_color = [0.02, 0.02, 0.06];
+end
+if ~exist('tilt_deformation_axis_length_method', 'var')
+    % Options: "ray_intersection" matches Zhao/Shaqfeh; "projection" is the old width estimate.
+    tilt_deformation_axis_length_method = "ray_intersection";
+end
 if ~exist('color_mode', 'var')
-    color_mode = "permeation";
+    % Options: "curvature", "permeation", "uniform", or "surface".
+    % "surface" uses uniform_color and hides triangle edges.
+    color_mode = "curvature";
 end
 if ~exist('uniform_color', 'var')
     uniform_color = [0.75, 0.78, 0.82];
+end
+color_mode = convertCharsToStrings(color_mode);
+use_uniform_color = any(color_mode == ["uniform", "surface", "uniform_surface"]);
+hide_mesh_edges = any(color_mode == ["surface", "uniform_surface"]);
+if hide_mesh_edges
+    mesh_edge_color = "none";
+else
+    mesh_edge_color = edge_color;
+end
+if lighting_options.enabled
+    mesh_face_lighting = lighting_options.face_lighting;
+else
+    mesh_face_lighting = 'none';
 end
 
 files = dir(fullfile(folder, 'geo*.mat'));
@@ -88,7 +137,6 @@ geoj = load(fullfile(folder, sprintf("geo%d.mat", tf)));
 geo = Geometry(geoj.M, geoj.P);
 view_rotation = make_view_rotation(view_rotation_angle_deg, view_rotation_axis, view_rotation_center);
 P_view = apply_view_rotation(geoj.P, view_rotation);
-use_uniform_color = strcmp(string(color_mode), "uniform");
 if use_uniform_color
     C = [];
 else
@@ -121,16 +169,26 @@ if use_uniform_color
     h = trisurf(geoj.M, P_view(:,1), P_view(:,2), P_view(:,3), ...
         'Parent', ax, ...
         'FaceColor', uniform_color, ...
-        'EdgeColor', edge_color, ...
-        'FaceAlpha', alph);
+        'EdgeColor', mesh_edge_color, ...
+        'FaceAlpha', alph, ...
+        'FaceLighting', mesh_face_lighting, ...
+        'AmbientStrength', lighting_options.ambient_strength, ...
+        'DiffuseStrength', lighting_options.diffuse_strength, ...
+        'SpecularStrength', lighting_options.specular_strength, ...
+        'SpecularExponent', lighting_options.specular_exponent);
 else
     h = trisurf(geoj.M, P_view(:,1), P_view(:,2), P_view(:,3), ...
         'Parent', ax, ...
         'FaceColor', 'interp', ...
         'FaceVertexCData', C, ...
         'CDataMapping', 'scaled', ...
-        'EdgeColor', edge_color, ...
-        'FaceAlpha', alph);
+        'EdgeColor', mesh_edge_color, ...
+        'FaceAlpha', alph, ...
+        'FaceLighting', mesh_face_lighting, ...
+        'AmbientStrength', lighting_options.ambient_strength, ...
+        'DiffuseStrength', lighting_options.diffuse_strength, ...
+        'SpecularStrength', lighting_options.specular_strength, ...
+        'SpecularExponent', lighting_options.specular_exponent);
 end
 if show_velocity
     velocity = reshape(geoj.velocity, [], 3);
@@ -148,8 +206,7 @@ else
     qv = [];
     velocity_ids = [];
 end
-% lighting(ax, 'gouraud');
-% camlight(ax, 'headlight');
+streamline_handles = gobjects(0);
 axis(ax, 'manual');
 axis(ax, 'equal');
 axis(ax, 'vis3d');
@@ -159,6 +216,11 @@ xlim(ax, [-edge, edge]);
 ylim(ax, [-edge, edge]);
 zlim(ax, [-edge, edge]);
 view(ax, view_azi, view_ele);
+if lighting_options.enabled
+    lighting(ax, lighting_options.face_lighting);
+    camlight(ax, 'headlight');
+    material(ax, 'dull');
+end
 
 gif_frame_count = 0;
 
@@ -175,13 +237,15 @@ for frame_idx = 1:numel(plot_ids)
     geo = Geometry(geoj.M, geoj.P);
     P_view = apply_view_rotation(geoj.P, view_rotation);
 
-    tilt_out = vesicleTiltDeformation(geoj.P,geoj.M,1,3);
+    tilt_out = vesicleTiltDeformation(geoj.P, geoj.M, 1, 3, tilt_deformation_axis_length_method);
     disp("Tilt angle: " + tilt_out.psi/pi)
     
-    disp("Deformation index:" + tilt_out.D)
+    disp("Deformation index: " + tilt_out.D)
+
+    disp("Reduced volume: "+reduced_volume(geo))
 
     %disp((geo.volume - 4/3*pi)/(4/3*pi));
-    %fprintf("Volume: %.9f\n", geo.volume/volume0);
+    fprintf("Volume: %.9f\n", geo.volume/volume0);
 
     if ~use_uniform_color
         C = frame_color_data(geoj, geo, color_mode, gamy);
@@ -190,7 +254,8 @@ for frame_idx = 1:numel(plot_ids)
     if use_uniform_color
         set(h, 'Faces', geoj.M, ...
             'Vertices', P_view, ...
-            'FaceColor', uniform_color);
+            'FaceColor', uniform_color, ...
+            'EdgeColor', mesh_edge_color);
     else
         set(h, 'Faces', geoj.M, ...
             'Vertices', P_view, ...
@@ -210,6 +275,19 @@ for frame_idx = 1:numel(plot_ids)
             'UData', velocity_view(velocity_ids,1), ...
             'VData', velocity_view(velocity_ids,2), ...
             'WData', velocity_view(velocity_ids,3));
+    end
+    delete_graphics(streamline_handles);
+    if show_streamlines
+        streamline_options.seed_count = streamline_seed_count;
+        streamline_options.steps = streamline_steps;
+        streamline_options.step_size = streamline_step_size;
+        streamline_options.surface_offset = streamline_surface_offset;
+        streamline_options.projection_neighbors = streamline_projection_neighbors;
+        streamline_options.line_width = streamline_line_width;
+        streamline_options.color = streamline_color;
+        streamline_handles = draw_surface_streamlines(ax, geoj, geo, view_rotation, streamline_options);
+    else
+        streamline_handles = gobjects(0);
     end
     if ~use_uniform_color
         %colorbar;%clim([0 2])
@@ -302,8 +380,8 @@ function V_view = rotate_view_vectors(V, view_rotation)
 end
 
 function C = frame_color_data(geoj, geo, color_mode, ~)
-    switch string(color_mode)
-        case "uniform"
+    switch string(color_mode) 
+        case {"uniform", "surface", "uniform_surface"}
             C = [];
         case "curvature"
             C = geo.v_mean_curvature ./ geo.v_area;
@@ -318,6 +396,128 @@ function C = frame_color_data(geoj, geo, color_mode, ~)
             end
             C = abs(Gamma + dot(geoj.f, geo.v_normal, 2));
         otherwise
-            error("Unknown color_mode '%s'. Use 'curvature' or 'permeation_velocity'.", color_mode);
+            error("Unknown color_mode '%s'. Use 'curvature', 'permeation', 'uniform', or 'surface'.", color_mode);
+    end
+end
+
+function handles = draw_surface_streamlines(ax, geoj, geo, view_rotation, options)
+    if ~isfield(geoj, 'velocity')
+        error("Cannot draw streamlines because this frame does not contain velocity.");
+    end
+
+    velocity = reshape(geoj.velocity, [], 3);
+    velocity_tan = velocity - geo.v_normal .* dot(velocity, geo.v_normal, 2);
+    speed = vecnorm(velocity_tan, 2, 2);
+    if max(speed) == 0
+        handles = gobjects(0);
+        return
+    end
+
+    mean_edge = mean_edge_length(geo);
+    step_length = options.step_size * mean_edge;
+    surface_offset = options.surface_offset * mean_edge;
+    seed_faces = streamline_seed_faces(geo, options.seed_count);
+    kdtree = KDTreeSearcher(geo.f_center);
+    handles = gobjects(numel(seed_faces), 1);
+    n_handles = 0;
+
+    for i = 1:numel(seed_faces)
+        face = seed_faces(i);
+        uv = [1/3, 1/3];
+        seed_point = geo.f_center(face, :);
+
+        [forward_points, forward_normals] = trace_surface_streamline( ...
+            geo, velocity_tan, kdtree, seed_point, face, uv, ...
+            step_length, options.steps, options.projection_neighbors, 1);
+        [backward_points, backward_normals] = trace_surface_streamline( ...
+            geo, velocity_tan, kdtree, seed_point, face, uv, ...
+            step_length, options.steps, options.projection_neighbors, -1);
+
+        points = [flipud(backward_points(2:end, :)); forward_points];
+        normals = [flipud(backward_normals(2:end, :)); forward_normals];
+        if size(points, 1) < 2
+            continue
+        end
+
+        points = points + surface_offset .* normals;
+        points_view = apply_view_rotation(points, view_rotation);
+        n_handles = n_handles + 1;
+        handles(n_handles, 1) = plot3(ax, points_view(:,1), points_view(:,2), points_view(:,3), ...
+            'Color', options.color, ...
+            'LineWidth', options.line_width, ...
+            'Clipping', 'on');
+    end
+    handles = handles(1:n_handles);
+end
+
+function [points, normals] = trace_surface_streamline(geo, velocity_tan, kdtree, ...
+        point, face, uv, step_length, max_steps, projection_neighbors, direction)
+    points = zeros(max_steps + 1, 3);
+    normals = zeros(max_steps + 1, 3);
+    min_speed = 1e-14;
+    n_points = 0;
+
+    for i = 1:(max_steps + 1)
+        normal = interpolate(geo.F, face, uv, geo.v_normal);
+        normal_norm = norm(normal);
+        if normal_norm == 0
+            break
+        end
+        normal = normal ./ normal_norm;
+
+        u = interpolate(geo.F, face, uv, velocity_tan);
+        u = u - dot(u, normal) .* normal;
+        u_norm = norm(u);
+
+        n_points = n_points + 1;
+        points(n_points, :) = point;
+        normals(n_points, :) = normal;
+
+        if u_norm < min_speed
+            break
+        end
+
+        trial_point = point + direction * step_length * (u ./ u_norm);
+        [next_face, next_uv, ~, fail] = project(geo.V, geo.F, trial_point, kdtree, projection_neighbors);
+        if fail
+            break
+        end
+
+        next_point = interpolate(geo.F, next_face, next_uv, geo.V);
+        if norm(next_point - point) < eps(step_length)
+            break
+        end
+
+        point = next_point;
+        face = next_face;
+        uv = next_uv;
+    end
+
+    points = points(1:n_points, :);
+    normals = normals(1:n_points, :);
+end
+
+function seed_faces = streamline_seed_faces(geo, seed_count)
+    n_faces = size(geo.F, 1);
+    seed_count = min(max(0, round(seed_count)), n_faces);
+    if seed_count == 0
+        seed_faces = zeros(0, 1);
+        return
+    end
+    seed_faces = unique(round(linspace(1, n_faces, seed_count)), 'stable').';
+end
+
+function mean_edge = mean_edge_length(geo)
+    edge_lengths = geo.he_length(isfinite(geo.he_length) & geo.he_length > 0);
+    if isempty(edge_lengths)
+        mean_edge = 1;
+    else
+        mean_edge = mean(edge_lengths);
+    end
+end
+
+function delete_graphics(handles)
+    if ~isempty(handles)
+        delete(handles(isgraphics(handles)));
     end
 end

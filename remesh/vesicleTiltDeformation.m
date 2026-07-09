@@ -1,4 +1,4 @@
-function out = vesicleTiltDeformation(P, M, flowDim, gradDim)
+function out = vesicleTiltDeformation(P, M, flowDim, gradDim, axisLengthMethod)
 %VESICLETILTDEFORMATION Compute vesicle tilt angle psi and deformation D.
 %
 % Inputs
@@ -6,6 +6,10 @@ function out = vesicleTiltDeformation(P, M, flowDim, gradDim)
 %   M       T x 3 triangle connectivity
 %   flowDim flow direction dimension, default 1 for x
 %   gradDim shear-gradient dimension, default 3 for z
+%   axisLengthMethod
+%           "projection"        use max/min projection width along each axis
+%           "ray_intersection"  use radius(+axis) + radius(-axis), matching
+%                               the Zhao/Shaqfeh-style definition (default)
 %
 % For the paper's shear flow u = gamma_dot*z*e_x:
 %   flowDim = 1;
@@ -25,6 +29,10 @@ function out = vesicleTiltDeformation(P, M, flowDim, gradDim)
 %   out.eShort       shorter principal direction
 %   out.center       centroid used for centering
 %   out.I            surface inertia tensor
+%   out.axis_length_method
+%                    requested axis length method
+%   out.axis_length_used
+%                    actual method used for the two shear-plane axes
 
     if nargin < 3 || isempty(flowDim)
         flowDim = 1;   % x
@@ -32,6 +40,10 @@ function out = vesicleTiltDeformation(P, M, flowDim, gradDim)
     if nargin < 4 || isempty(gradDim)
         gradDim = 3;   % z
     end
+    if nargin < 5 || isempty(axisLengthMethod)
+        axisLengthMethod = "ray_intersection";
+    end
+    axisLengthMethod = normalizeAxisLengthMethod(axisLengthMethod);
 
     P = double(P);
     M = double(M);
@@ -59,10 +71,11 @@ function out = vesicleTiltDeformation(P, M, flowDim, gradDim)
     eA = axes(:, iA);
     eB = axes(:, iB);
 
-    % Axis lengths. For convex vesicles, projection width is robust and
-    % usually agrees with the paper's radius-sum definition.
-    LA = axisLengthProjection(Pc, eA);
-    LB = axisLengthProjection(Pc, eB);
+    % Axis lengths. The ray-intersection method follows the radius-sum
+    % definition used by Zhao/Shaqfeh; projection width is the older robust
+    % approximation.
+    [LA, usedA] = axisLength(Pc, M, eA, axisLengthMethod);
+    [LB, usedB] = axisLength(Pc, M, eB, axisLengthMethod);
 
     % Pick long and short axes in the shear plane.
     if LA >= LB
@@ -105,6 +118,8 @@ function out = vesicleTiltDeformation(P, M, flowDim, gradDim)
     out.I = I;
     out.eigvals = eigvals;
     out.axes = axes;
+    out.axis_length_method = axisLengthMethod;
+    out.axis_length_used = [usedA, usedB];
 end
 
 
@@ -165,4 +180,85 @@ function L = axisLengthProjection(Pc, e)
     e = e(:) / norm(e);
     q = Pc * e;
     L = max(q) - min(q);
+end
+
+
+function method = normalizeAxisLengthMethod(method)
+    method = lower(string(method));
+    switch method
+        case {"projection", "projected", "width", "projection_width"}
+            method = "projection";
+        case {"ray", "ray_intersection", "radius_sum", "shaqfeh", "zhao_shaqfeh"}
+            method = "ray_intersection";
+        otherwise
+            error("Unknown axisLengthMethod '%s'. Use 'projection' or 'ray_intersection'.", method);
+    end
+end
+
+
+function [L, usedMethod] = axisLength(Pc, M, e, method)
+    switch method
+        case "projection"
+            L = axisLengthProjection(Pc, e);
+            usedMethod = "projection";
+        case "ray_intersection"
+            [rPlus, hitPlus] = raySurfaceRadius(Pc, M, e);
+            [rMinus, hitMinus] = raySurfaceRadius(Pc, M, -e);
+            if hitPlus && hitMinus
+                L = rPlus + rMinus;
+                usedMethod = "ray_intersection";
+            else
+                L = axisLengthProjection(Pc, e);
+                usedMethod = "projection_fallback";
+            end
+    end
+end
+
+
+function [radius, hit] = raySurfaceRadius(Pc, M, e)
+%RAYSURFACERADIUS First positive ray/triangle intersection distance.
+% The ray starts at the centered origin and points along unit direction e.
+
+    e = e(:).' / norm(e);
+
+    A = Pc(M(:,1), :);
+    B = Pc(M(:,2), :);
+    C = Pc(M(:,3), :);
+    edge1 = B - A;
+    edge2 = C - A;
+    n_tri = size(M, 1);
+
+    ray = repmat(e, n_tri, 1);
+    h = cross(ray, edge2, 2);
+    det = dot(edge1, h, 2);
+
+    scale = max(1, max(abs(Pc), [], "all"));
+    detTol = 1e-14 * scale^2;
+    baryTol = 1e-10;
+    tTol = 1e-12 * scale;
+
+    notParallel = abs(det) > detTol;
+    invDet = zeros(n_tri, 1);
+    invDet(notParallel) = 1 ./ det(notParallel);
+
+    s = -A;
+    u = invDet .* dot(s, h, 2);
+    q = cross(s, edge1, 2);
+    v = invDet .* dot(ray, q, 2);
+    t = invDet .* dot(edge2, q, 2);
+
+    valid = notParallel ...
+        & u >= -baryTol ...
+        & v >= -baryTol ...
+        & (u + v) <= 1 + baryTol ...
+        & t > tTol ...
+        & isfinite(t);
+
+    if any(valid)
+        radius = min(t(valid));
+        hit = true;
+    else
+        radius = NaN;
+        hit = false;
+    end
 end

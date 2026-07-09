@@ -39,7 +39,7 @@ if ~isfield(p, 'remesh_size')
     p.remesh_size = 0;
 end
 if ~isfield(p, 'initial_remesh')
-    p.initial_remesh = false;
+    p.initial_remesh = true;
 end
 if ~isfield(p, 'Sd')
     p.Sd = 1;
@@ -61,6 +61,9 @@ if ~isfield(p, 'precondition_system')
 end
 if ~isfield(p, 'project_dP_translation')
     p.project_dP_translation = false;
+end
+if ~isfield(p, 'conserve_slp_volume')
+    p.conserve_slp_volume = true;
 end
 if ~isfield(p, 'bending_hessian_mode')
     p.bending_hessian_mode = "exact";
@@ -106,16 +109,29 @@ if start == 0
         M = loaded.M;
     else
         [P, M] = subdivided_sphere(p.subdivisions);
+
+        % For Desimone figure
+        %load('budded_vesicle.mat')
+
+        % For permeability figures
+        %stretch_factor = a_from_v(.95);
+
+        %For Shaqfeh figure
+        stretch_factor = a_from_v(.95);
+        P(:,3) = stretch_factor*P(:,3);
+        [P,M] = rotate_vesicle(P,M,.3,"y");
         
-        P(:,3) = 1.1*P(:,3);
     end
 
     geo = Geometry(M, P);
+    
     if p.initial_remesh && hasRemesher
         disp('Remeshing at start')
+        geo_pre = geo;
         [M, P] = remeshing(int32(M), P, int32([]), mean(geo.he_length), int32(100));
         M = cast(M, "double");
         geo = Geometry(M, P);
+        [P, geo] = newton_correct_volume(geo, geo_pre.area, geo_pre.volume);
     end
     if p.roughness ~= 0
         geo = perturb_rand(geo, p.roughness);
@@ -124,11 +140,12 @@ if start == 0
     end
 
     p.area0 = geo.area;
+    p.volume0 = geo.volume;
 
     o.h = .01;
     o.eta = 1;
-    o.tol_b = 1e-10;
-    o.tol_c = .01;
+    o.tol_b = 1e-7;
+    o.tol_c = 1e-10;
     o.tol_d = .01;
     o.tol_f = o.tol_b;
     o.max_iter = 10000;
@@ -176,8 +193,9 @@ if start == 0
     end
 else
     p_input = p;
-    dt_override = p.dt;
+    %dt_override = p.dt;
     k_override = p.k;
+    T_override = p.T; 
     remesh_size = p.remesh_size;
     load(sprintf("%sgeo%d.mat", dir, start), "M", "P", "velocity", "lambda", "p", "o", "r");
     if exist(sprintf("%sgeo%d.mat", dir, start), "file")
@@ -188,12 +206,14 @@ else
             f = zeros(size(P));
         end
     end
-    p.dt = dt_override;
+    %p.dt = dt_override;
     p.k = k_override;
+    p.T = T_override;
     p.remesh_size = remesh_size;
     override_fields = ["Sd", "Da", "Gamma", "gamy", "chi", ...
         "tol_b", "tol_c", "tol_d", "max_iter", "h", "eta", ...
         "precondition_system", "project_dP_translation", ...
+        "conserve_slp_volume", ...
         "bending_hessian_mode", ...
         "line_search", "line_search_tau", "line_search_max_iter", "line_search_c", ...
         "line_search_wb", "line_search_wc", "line_search_wd"];
@@ -208,6 +228,9 @@ else
     end
     if ~isfield(p, 'project_dP_translation')
         p.project_dP_translation = false;
+    end
+    if ~isfield(p, 'conserve_slp_volume')
+        p.conserve_slp_volume = false;
     end
     if ~isfield(p, 'bending_hessian_mode')
         p.bending_hessian_mode = "bih";
@@ -234,6 +257,9 @@ else
         p.line_search_wd = 1;
     end
     geo = Geometry(M, P);
+    if ~isfield(p, 'volume0')
+        p.volume0 = geo.volume;
+    end
     if ~isfield(p, 'total_time')
         p.total_time = 0;
     end
@@ -281,8 +307,8 @@ else
         [P, smooth_info] = valence_neighbor_average_smooth(M, P, ...
         [5, 7], 1, .25);
 
-        P = P * sqrt(p.area0 / geo.area);
         geo = Geometry(M, P);
+        [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
         [velocity, f] = map_data(geo, geo_pre, velocity, f);
         slp_cache = stokeslet_SLP_triangle_setup(M);
         disp("Old: " + length(geo_pre.V))
@@ -293,7 +319,7 @@ else
     % o.tol_b = 1e-8;
     % o.tol_c = 1e-7;
     % o.tol_d = 1e-7;
-    p.bending_hessian_mode = "bih";
+    %p.bending_hessian_mode = "bih";
 
     %.h = o.h*3;
     %o.eta = 0;
@@ -332,6 +358,9 @@ for t = (start + 1):p.T
 
 
     S = stokeslet_SLP_triangle_matrix(P, M, slp_cache);
+    if p.conserve_slp_volume
+        S = project_slp_matrix_zero_flux(S, geo);
+    end
     N = normal_projection_matrix(geo.v_normal);
     NN = blkdiag(mass0, mass0, mass0) * N;
 
@@ -352,7 +381,7 @@ for t = (start + 1):p.T
     n_state = numel(P);
     M3 = blkdiag(mass0, mass0, mass0);
     I_state = speye(n_state);
-    bie_df = p.Sd * (S + p.Da * N);
+    bie_df = -p.Sd * (S + p.Da * N);
     % full_Jac = [
     %     Hess,              -p.dt * M3;
     %     -I_state / p.dt,    bie_df
@@ -383,7 +412,7 @@ for t = (start + 1):p.T
         b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
         P_bie = reshape(P0, [], 3);
         geo_bie = Geometry(M, P_bie);
-        u_background = shearextensionflow(P_bie, p.gamy);
+        u_background = shear_flow(P_bie, p.gamy);%poiseuille_flow(P_bie,p.gamy,12.5);%shear_flow(P_bie, p.gamy);
         c = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
 
 
@@ -573,7 +602,7 @@ for t = (start + 1):p.T
     [P, velocity] = rm_rigid_patched(P, (P(:) - P0) / p.dt, geo.v_area,"translation");
     geo = Geometry(M, P);
 
-    if 0 %hasRemesher && deformation_criterion(geo)
+    if 1 %hasRemesher && deformation_criterion(geo)
         geo_pre = geo;
         if ~supress_outputs
             fprintf("Remeshing. t = %d \n", t);
@@ -581,14 +610,19 @@ for t = (start + 1):p.T
         [M, P] = remeshing(int32(M), P, int32([]), r.edge_length, int32(r.n_iter));
         M = cast(M, "double");
         geo = Geometry(M, P);
-        P = P * sqrt(p.area0 / geo.area);
-        geo = Geometry(M, P);
+        
+        if true
+            fprintf("Reduced volume before correction: %.9f\n", reduced_volume(geo));
+        [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
+        fprintf("Reduced volume after correction: %.9f\n", reduced_volume(geo));
+        end
+
         [velocity, f] = map_data(geo, geo_pre, velocity, f);
         slp_cache = stokeslet_SLP_triangle_setup(M);
     end
 
     geo = Geometry(M, P);
-    P = P * sqrt(p.area0 / geo.area);
+    %P = P * sqrt(p.area0 / geo.area);
     geo = Geometry(M, P);
     fb = geo.bending_force(1);
 
@@ -596,6 +630,14 @@ for t = (start + 1):p.T
     if ~supress_outputs
         fprintf("Save geo%d.mat at j = %d, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g, total time: %0.4f\n", ...
             t, j, eps_b, eps_c, eps_d, p.total_time);
+    end
+end
+
+function target_volume = remesh_target_volume(geo_pre, p)
+    if isfield(p, 'volume0') && p.Da == 0
+        target_volume = p.volume0;
+    else
+        target_volume = geo_pre.volume;
     end
 end
 
@@ -623,8 +665,11 @@ end
 
 function c_res = bie_residual(P, M, f, geo, u, u_background, slp_cache, p) %takes in  traction f, returns traction c
     slpout = stokeslet_SLP_triangle(P, M, f, slp_cache);
-    normal_slip = p.Gamma - dot(f, geo.v_normal, 2);
-    c_res = - u + u_background + p.Sd * slpout - p.Sd*p.Da*normal_slip.*geo.v_normal;
+    if p.conserve_slp_volume
+        slpout = project_velocity_zero_flux(slpout, geo);
+    end
+    normal_slip = p.Gamma + dot(f, geo.v_normal, 2);
+    c_res = - u + u_background - p.Sd * slpout - p.Sd*p.Da*normal_slip.*geo.v_normal;
 end
 
 function b_res = force_balance_residual(P, P0, M, f, lambda, KTK, DTD, ...
@@ -667,6 +712,33 @@ function dP = remove_translation_step(dP, v_area)
     dP = reshape(dP_mat - translation, [], 1);
 end
 
+function S = project_slp_matrix_zero_flux(S, geo)
+    q = volume_flux_vector(geo);
+    r = geo.v_normal(:);
+    denom = q.' * r;
+    if abs(denom) < eps
+        warning("Skipping SLP volume projection because the normal-flux denominator is too small.");
+        return
+    end
+    flux_row = (sparse(q).' * S) / denom;
+    S = S - sparse(r) * flux_row;
+end
+
+function u = project_velocity_zero_flux(u, geo)
+    flux = sum(dot(u, geo.v_normal, 2) .* geo.v_area);
+    denom = sum(sum(geo.v_normal .^ 2, 2) .* geo.v_area);
+    if abs(denom) < eps
+        warning("Skipping SLP volume projection because the normal-flux denominator is too small.");
+        return
+    end
+    u = u - (flux / denom) * geo.v_normal;
+end
+
+function q = volume_flux_vector(geo)
+    q_mat = geo.v_area .* geo.v_normal;
+    q = q_mat(:);
+end
+
 function nodal = traction_to_nodal(traction, geo)
     nodal = traction .* geo.v_area;
 end
@@ -697,4 +769,117 @@ function N = normal_projection_matrix(v_normal)
     end
 
     N = sparse(rows, cols, vals, 3 * n_v, 3 * n_v);
+end
+
+
+function a = a_from_v(v)
+% a_from_v  Prolate spheroid aspect ratio from reduced volume.
+%
+%   a = a_from_v(v)
+%
+% Returns the aspect ratio a = c/b >= 1 for a prolate spheroid whose
+% reduced volume is v, using
+%
+%   v = V / ((4*pi/3) * R_A^3),
+%   R_A = sqrt(A/(4*pi)).
+%
+% Valid input:
+%   0 < v <= 1
+%
+% For v = 1, the result is a = 1, the sphere.
+
+    if v <= 0 || v > 1
+        error('v must satisfy 0 < v <= 1.');
+    end
+
+    if abs(v - 1) < 1e-12
+        a = 1;
+        return
+    end
+
+    f = @(a) reduced_volume_prolate(a) - v;
+
+    % Find an upper bracket where reduced_volume(a) < v
+    lo = 1;
+    hi = 2;
+
+    while f(hi) > 0
+        hi = 2 * hi;
+    end
+
+    % Solve by bisection/fzero with bracket
+    a = fzero(f, [lo hi]);
+end
+
+
+function v = reduced_volume_prolate(a)
+% reduced_volume  Reduced volume of prolate spheroid with aspect ratio a.
+
+    if abs(a - 1) < 1e-12
+        v = 1;
+        return
+    end
+
+    e = sqrt(1 - 1/a^2);
+
+    F = 1 + (a/e) * asin(e);
+
+    v = 2 * sqrt(2) * a / F^(3/2);
+end
+
+function a = a_from_v_oblate(v)
+% a_from_v_oblate  Oblate spheroid flattening factor from reduced volume.
+%
+%   a = a_from_v_oblate(v)
+%
+% Returns the flattening factor a = c/b, with 0 < a <= 1, for an oblate
+% spheroid whose reduced volume is v:
+%
+%   v = V / ((4*pi/3) * R_A^3),
+%   R_A = sqrt(A/(4*pi)).
+%
+% Valid input:
+%   0 < v <= 1
+%
+% For v = 1, the result is a = 1, the sphere.
+% For smaller v, a < 1, giving a flatter oblate spheroid.
+
+    if v <= 0 || v > 1
+        error('v must satisfy 0 < v <= 1.');
+    end
+
+    if abs(v - 1) < 1e-12
+        a = 1;
+        return
+    end
+
+    f = @(a) reduced_volume_oblate(a) - v;
+
+    % reduced_volume_oblate(a) increases from 0 to 1 on 0 < a <= 1
+    lo = 1e-12;
+    hi = 1;
+
+    a = fzero(f, [lo hi]);
+end
+
+
+function v = reduced_volume_oblate(a)
+% reduced_volume_oblate  Reduced volume of oblate spheroid with c/b = a.
+
+    if abs(a - 1) < 1e-10
+        v = 1;
+        return
+    end
+
+    % Extremely flat limit: a -> 0 gives F -> 1 and v -> 2*sqrt(2)*a
+    if a < 1e-8
+        v = 2 * sqrt(2) * a;
+        return
+    end
+
+    e = sqrt(1 - a^2);
+
+    F = 1 + (a^2 / e) * atanh(e);
+
+    v = 2 * sqrt(2) * a / F^(3/2);
 end

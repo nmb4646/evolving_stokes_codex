@@ -109,18 +109,30 @@ if start == 0
         M = loaded.M;
     else
         [P, M] = subdivided_sphere(p.subdivisions);
-        
-        stretch_factor = a_from_v(.95);
 
+        % For Desimone figure
+        %load('budded_vesicle.mat')
+
+        % For permeability figures
+        %stretch_factor = a_from_v(.95);
+
+        %For Shaqfeh figure
+        p.v = .95;
+        stretch_factor = a_from_v(p.v);
         P(:,3) = stretch_factor*P(:,3);
+        [P,M] = rotate_vesicle(P,M,.3125,"y");
+        
     end
 
     geo = Geometry(M, P);
+    fprintf("Reduced volume initial: %.9f\n", reduced_volume(geo));
     if p.initial_remesh && hasRemesher
         disp('Remeshing at start')
+        geo_pre = geo;
         [M, P] = remeshing(int32(M), P, int32([]), mean(geo.he_length), int32(100));
         M = cast(M, "double");
         geo = Geometry(M, P);
+        [P, geo] = newton_correct_volume(geo, geo_pre.area, geo_pre.volume);
     end
     if p.roughness ~= 0
         geo = perturb_rand(geo, p.roughness);
@@ -129,6 +141,7 @@ if start == 0
     end
 
     p.area0 = geo.area;
+    p.volume0 = geo.volume;
 
     o.h = .01;
     o.eta = 1;
@@ -245,6 +258,9 @@ else
         p.line_search_wd = 1;
     end
     geo = Geometry(M, P);
+    if ~isfield(p, 'volume0')
+        p.volume0 = geo.volume;
+    end
     if ~isfield(p, 'total_time')
         p.total_time = 0;
     end
@@ -292,8 +308,8 @@ else
         [P, smooth_info] = valence_neighbor_average_smooth(M, P, ...
         [5, 7], 1, .25);
 
-        P = P * sqrt(p.area0 / geo.area);
         geo = Geometry(M, P);
+        [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
         [velocity, f] = map_data(geo, geo_pre, velocity, f);
         slp_cache = stokeslet_SLP_triangle_setup(M);
         disp("Old: " + length(geo_pre.V))
@@ -587,7 +603,7 @@ for t = (start + 1):p.T
     [P, velocity] = rm_rigid_patched(P, (P(:) - P0) / p.dt, geo.v_area,"translation");
     geo = Geometry(M, P);
 
-    if 0 %hasRemesher && deformation_criterion(geo)
+    if 1 %hasRemesher && deformation_criterion(geo)
         geo_pre = geo;
         if ~supress_outputs
             fprintf("Remeshing. t = %d \n", t);
@@ -595,8 +611,13 @@ for t = (start + 1):p.T
         [M, P] = remeshing(int32(M), P, int32([]), r.edge_length, int32(r.n_iter));
         M = cast(M, "double");
         geo = Geometry(M, P);
-        P = P * sqrt(p.area0 / geo.area);
-        geo = Geometry(M, P);
+        
+        if true
+            %fprintf("Reduced volume before correction: %.9f\n", reduced_volume(geo));
+            [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
+            %fprintf("Reduced volume after correction: %.9f\n", reduced_volume(geo));
+        end
+
         [velocity, f] = map_data(geo, geo_pre, velocity, f);
         slp_cache = stokeslet_SLP_triangle_setup(M);
     end
@@ -610,6 +631,14 @@ for t = (start + 1):p.T
     if ~supress_outputs
         fprintf("Save geo%d.mat at j = %d, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g, total time: %0.4f\n", ...
             t, j, eps_b, eps_c, eps_d, p.total_time);
+    end
+end
+
+function target_volume = remesh_target_volume(geo_pre, p)
+    if isfield(p, 'volume0') && p.Da == 0
+        target_volume = p.volume0;
+    else
+        target_volume = geo_pre.volume;
     end
 end
 
@@ -769,7 +798,7 @@ function a = a_from_v(v)
         return
     end
 
-    f = @(a) reduced_volume(a) - v;
+    f = @(a) reduced_volume_prolate(a) - v;
 
     % Find an upper bracket where reduced_volume(a) < v
     lo = 1;
@@ -784,7 +813,7 @@ function a = a_from_v(v)
 end
 
 
-function v = reduced_volume(a)
+function v = reduced_volume_prolate(a)
 % reduced_volume  Reduced volume of prolate spheroid with aspect ratio a.
 
     if abs(a - 1) < 1e-12
@@ -795,6 +824,63 @@ function v = reduced_volume(a)
     e = sqrt(1 - 1/a^2);
 
     F = 1 + (a/e) * asin(e);
+
+    v = 2 * sqrt(2) * a / F^(3/2);
+end
+
+function a = a_from_v_oblate(v)
+% a_from_v_oblate  Oblate spheroid flattening factor from reduced volume.
+%
+%   a = a_from_v_oblate(v)
+%
+% Returns the flattening factor a = c/b, with 0 < a <= 1, for an oblate
+% spheroid whose reduced volume is v:
+%
+%   v = V / ((4*pi/3) * R_A^3),
+%   R_A = sqrt(A/(4*pi)).
+%
+% Valid input:
+%   0 < v <= 1
+%
+% For v = 1, the result is a = 1, the sphere.
+% For smaller v, a < 1, giving a flatter oblate spheroid.
+
+    if v <= 0 || v > 1
+        error('v must satisfy 0 < v <= 1.');
+    end
+
+    if abs(v - 1) < 1e-12
+        a = 1;
+        return
+    end
+
+    f = @(a) reduced_volume_oblate(a) - v;
+
+    % reduced_volume_oblate(a) increases from 0 to 1 on 0 < a <= 1
+    lo = 1e-12;
+    hi = 1;
+
+    a = fzero(f, [lo hi]);
+end
+
+
+function v = reduced_volume_oblate(a)
+% reduced_volume_oblate  Reduced volume of oblate spheroid with c/b = a.
+
+    if abs(a - 1) < 1e-10
+        v = 1;
+        return
+    end
+
+    % Extremely flat limit: a -> 0 gives F -> 1 and v -> 2*sqrt(2)*a
+    if a < 1e-8
+        v = 2 * sqrt(2) * a;
+        return
+    end
+
+    e = sqrt(1 - a^2);
+
+    F = 1 + (a^2 / e) * atanh(e);
 
     v = 2 * sqrt(2) * a / F^(3/2);
 end
