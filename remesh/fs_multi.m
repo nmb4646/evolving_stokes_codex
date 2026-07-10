@@ -53,6 +53,9 @@ end
 if ~isfield(p, 'gamy')
     p.gamy = 0;
 end
+if ~isfield(p, 'v')
+    disp('No v provided!')
+end
 if ~isfield(p, 'chi')
     p.chi = 0.1;
 end
@@ -117,11 +120,12 @@ if start == 0
         %stretch_factor = a_from_v(.95);
 
         %For Shaqfeh figure
-        p.v = .8635;
         stretch_factor = a_from_v(p.v);
         P(:,3) = stretch_factor*P(:,3);
+
+        geo_upright=Geometry(M,P);
         
-        phi0 = .145;
+        phi0 = phi0_from_excess(excess_area(geo_upright));
 
         [P,M] = rotate_vesicle(P,M,.5-phi0,"y");
         
@@ -214,7 +218,7 @@ else
     p.k = k_override;
     p.T = T_override;
     p.remesh_size = remesh_size;
-    override_fields = ["Sd", "Da", "Gamma", "gamy", "chi", ...
+    override_fields = ["Sd", "Da", "Gamma", "gamy", "v", "chi", ...
         "tol_b", "tol_c", "tol_d", "max_iter", "h", "eta", ...
         "precondition_system", "project_dP_translation", ...
         "conserve_slp_volume", ...

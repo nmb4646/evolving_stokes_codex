@@ -10,12 +10,13 @@ Gamma = 0;
 Sd = 1e-6;
 Da = 0;
 gamy = 8e-7;
+v = 9.89e-1;
 
 plot_stride = 1;
 
 override_ids = [];
 
-run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e', Sd, Da, gamy);
+run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e', Sd, Da, gamy, v);
 run_tag = strrep(run_tag, '+', 'p');
 run_tag = strrep(run_tag, '-', 'm');
 

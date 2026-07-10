@@ -10,6 +10,7 @@ close all; clc;
 Da = 0;
 Sd = [1e-6];
 gamy = [8e-7];
+v = .863;
 
 % First geo timestep to include. Use 0 to include geo0.mat.
 time_start = 1;
@@ -52,9 +53,11 @@ addpath(remesh_dir);
 data_dir = find_data_dir(script_dir, remesh_dir);
 sd_values = Sd(:).';
 gamy_values = gamy(:).';
+v_values = v(:).';
 multiple_sd = numel(sd_values) > 1;
 multiple_gamy = numel(gamy_values) > 1;
-run_count = numel(sd_values) * numel(gamy_values);
+multiple_v = numel(v_values) > 1;
+run_count = numel(sd_values) * numel(gamy_values) * numel(v_values);
 multiple_runs = run_count > 1;
 metrics = normalize_metrics(visual.metrics);
 plot_count = numel(metrics);
@@ -83,41 +86,51 @@ for sd_idx = 1:numel(sd_values)
 
     for gamy_idx = 1:numel(gamy_values)
         gamy_current = gamy_values(gamy_idx);
-        run_idx = run_idx + 1;
-        run_tag = make_run_tag(Sd_current, Da, gamy_current);
-        folder = fullfile(data_dir, run_tag);
 
-        fprintf("Loading %s\n", folder);
+        for v_idx = 1:numel(v_values)
+            v_current = v_values(v_idx);
+            run_idx = run_idx + 1;
+            run_tag = make_run_tag(Sd_current, Da, gamy_current, v_current);
+            folder = fullfile(data_dir, run_tag);
 
-        [x, x_label_current, tilt, D] = load_tilt_deformation_series(folder, flow_dim, grad_dim, ...
-            axis_length_method, tilt_options, time_start, time_final);
-        [x, x_label_current] = apply_time_scaling(x, x_label_current, ...
-            gamy_current, Sd_current, visual);
+            fprintf("Loading %s\n", folder);
 
-        if strlength(x_label) == 0
-            x_label = x_label_current;
-        elseif x_label ~= x_label_current
-            x_label = "Time / timestep";
+            [x, x_label_current, tilt, D] = load_tilt_deformation_series(folder, flow_dim, grad_dim, ...
+                axis_length_method, tilt_options, time_start, time_final);
+            rate_x = x;
+            rate_x_label = x_label_current;
+            [x, x_label_current] = apply_time_scaling(x, x_label_current, ...
+                gamy_current, Sd_current, visual);
+
+            if strlength(x_label) == 0
+                x_label = x_label_current;
+            elseif x_label ~= x_label_current
+                x_label = "Time / timestep";
+            end
+
+            for metric_idx = 1:plot_count
+                [y, metric_labels(metric_idx)] = metric_to_plot_values( ...
+                    metrics(metric_idx), tilt, D, visual);
+                plot(axes_list(metric_idx), x, y, ...
+                    "LineWidth", visual.line_width, ...
+                    "Marker", visual.marker, ...
+                    "MarkerSize", visual.marker_size);
+            end
+
+            legend_entries(run_idx) = make_legend_entry(Sd_current, gamy_current, v_current, ...
+                multiple_sd, multiple_gamy, multiple_v);
+
+            fprintf("Sd = %.8g, gamy = %.8g, v = %.8g, initial tilt: %.8g psi/pi, %.8g rad, %.8g deg\n", ...
+                Sd_current, gamy_current, v_current, tilt(1) / pi, tilt(1), rad2deg(tilt(1)));
+            fprintf("Sd = %.8g, gamy = %.8g, v = %.8g, final tilt:   %.8g psi/pi, %.8g rad, %.8g deg\n", ...
+                Sd_current, gamy_current, v_current, tilt(end) / pi, tilt(end), rad2deg(tilt(end)));
+            fprintf("Sd = %.8g, gamy = %.8g, v = %.8g, initial D: %.8g, final D: %.8g\n", ...
+                Sd_current, gamy_current, v_current, D(1), D(end));
+
+            if ~multiple_runs
+                print_mean_tilt_rate(tilt, rate_x, rate_x_label);
+            end
         end
-
-        for metric_idx = 1:plot_count
-            [y, metric_labels(metric_idx)] = metric_to_plot_values( ...
-                metrics(metric_idx), tilt, D, visual);
-            plot(axes_list(metric_idx), x, y, ...
-                "LineWidth", visual.line_width, ...
-                "Marker", visual.marker, ...
-                "MarkerSize", visual.marker_size);
-        end
-
-        legend_entries(run_idx) = make_legend_entry(Sd_current, gamy_current, ...
-            multiple_sd, multiple_gamy);
-
-        fprintf("Sd = %.8g, gamy = %.8g, initial tilt: %.8g psi/pi, %.8g rad, %.8g deg\n", ...
-            Sd_current, gamy_current, tilt(1) / pi, tilt(1), rad2deg(tilt(1)));
-        fprintf("Sd = %.8g, gamy = %.8g, final tilt:   %.8g psi/pi, %.8g rad, %.8g deg\n", ...
-            Sd_current, gamy_current, tilt(end) / pi, tilt(end), rad2deg(tilt(end)));
-        fprintf("Sd = %.8g, gamy = %.8g, initial D: %.8g, final D: %.8g\n", ...
-            Sd_current, gamy_current, D(1), D(end));
     end
 end
 
@@ -136,11 +149,11 @@ xlabel(axes_list(end), x_label);
 
 if multiple_runs
     title(axes_list(1), sprintf("%s over time: %s", ...
-        metrics_title(metrics), comparison_title_suffix(Da, sd_values, gamy_values)));
+        metrics_title(metrics), comparison_title_suffix(Da, sd_values, gamy_values, v_values)));
     legend(axes_list(1), legend_entries, "Location", "best");
 else
-    title(axes_list(1), sprintf("%s over time: Sd = %.4g, Da = %.4g, gamy = %.4g", ...
-        metrics_title(metrics), sd_values, Da, gamy_values));
+    title(axes_list(1), sprintf("%s over time: Sd = %.4g, Da = %.4g, gamy = %.4g, v = %.4g", ...
+        metrics_title(metrics), sd_values, Da, gamy_values, v_values));
 end
 
 if visual.save_figure
@@ -249,6 +262,33 @@ function [x, x_label] = apply_time_scaling(x, base_label, gamy, Sd, visual)
     x_label = "Scaled " + quantity + " (" + expression + ")";
 end
 
+function print_mean_tilt_rate(tilt, x, x_label)
+    if numel(tilt) < 2
+        fprintf("Mean dphi/dt unavailable: fewer than two plotted frames.\n");
+        return
+    end
+
+    dx = diff(x);
+    dphi = diff(tilt);
+    valid = isfinite(dx) & isfinite(dphi) & dx ~= 0;
+
+    if ~any(valid)
+        fprintf("Mean dphi/dt unavailable: no valid finite-difference intervals.\n");
+        return
+    end
+
+    mean_rate = mean(abs(dphi(valid) ./ dx(valid)));
+    mean_rate_over_pi = mean_rate / pi;
+
+    if x_label == "Time"
+        fprintf("Mean absolute dphi/dt over plotted interval: %.8g rad/time, %.8g abs(psi/pi)/time\n", ...
+            mean_rate, mean_rate_over_pi);
+    else
+        fprintf("Mean absolute dphi/dt unavailable because p.dt was not found; mean absolute dphi/dstep: %.8g rad/step, %.8g abs(psi/pi)/step\n", ...
+            mean_rate, mean_rate_over_pi);
+    end
+end
+
 function metrics = normalize_metrics(metrics)
     metrics = lower(string(metrics));
     if isempty(metrics)
@@ -304,13 +344,13 @@ function title_text = metrics_title(metrics)
     end
 end
 
-function run_tag = make_run_tag(Sd, Da, gamy)
-    run_tag = sprintf("Sd_%.2e_Da_%.2e_gamy_%+.2e", Sd, Da, gamy);
+function run_tag = make_run_tag(Sd, Da, gamy, v)
+    run_tag = sprintf("Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e", Sd, Da, gamy, v);
     run_tag = strrep(run_tag, "+", "p");
     run_tag = strrep(run_tag, "-", "m");
 end
 
-function label = make_legend_entry(Sd, gamy, show_sd, show_gamy)
+function label = make_legend_entry(Sd, gamy, v, show_sd, show_gamy, show_v)
     parts = strings(0, 1);
 
     if show_sd
@@ -321,14 +361,18 @@ function label = make_legend_entry(Sd, gamy, show_sd, show_gamy)
         parts(end + 1) = sprintf("gamy = %.4g", gamy);
     end
 
+    if show_v
+        parts(end + 1) = sprintf("v = %.4g", v);
+    end
+
     if isempty(parts)
-        label = sprintf("Sd = %.4g, gamy = %.4g", Sd, gamy);
+        label = sprintf("Sd = %.4g, gamy = %.4g, v = %.4g", Sd, gamy, v);
     else
         label = strjoin(parts, ", ");
     end
 end
 
-function suffix = comparison_title_suffix(Da, sd_values, gamy_values)
+function suffix = comparison_title_suffix(Da, sd_values, gamy_values, v_values)
     parts = "Da = " + sprintf("%.4g", Da);
 
     if isscalar(sd_values)
@@ -337,6 +381,10 @@ function suffix = comparison_title_suffix(Da, sd_values, gamy_values)
 
     if isscalar(gamy_values)
         parts(end + 1) = "gamy = " + sprintf("%.4g", gamy_values);
+    end
+
+    if isscalar(v_values)
+        parts(end + 1) = "v = " + sprintf("%.4g", v_values);
     end
 
     suffix = strjoin(parts, ", ");

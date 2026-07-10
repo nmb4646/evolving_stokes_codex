@@ -34,9 +34,10 @@ misbah_data=[0.08803611738148984, 0.21694214876033058
 1.1580135440180586, 0.11225895316804407
 1.3205417607223475, 0.09951790633608816];
 
-broussinos_data = [.45, .1775;
-.1, .2175;
-1 .1425]
+broussinos_data = [.45, .17875;
+.1, .2156;
+.8, .15;
+1 .1405];
 
 plot(shaqfeh_data(:,1),shaqfeh_data(:,2),'k',LineWidth=1.5,DisplayName="Zhao & Shaqfeh simulations"); hold on;
 plot(misbah_data(:,1),misbah_data(:,2),'k',LineStyle='--',LineWidth=1.5,DisplayName="Misbah perturbation theory");
@@ -44,7 +45,7 @@ scatter(kantsler_data(:,1),kantsler_data(:,2),100,LineWidth=2,MarkerEdgeColor='k
 scatter(broussinos_data(:,1),broussinos_data(:,2),100,LineWidth=2,MarkerEdgeColor='g',DisplayName="My measurements")
 
 set(gcf,"Position",[600,200,1000,700])
-title("Membrane excess area vs tilt angle, \chi = 9",'Interpreter','tex',FontSize=30)
+title("Membrane excess area vs tilt angle, \chi = 8",'Interpreter','tex',FontSize=30)
 xlim([0,1.5]); ylim([0.1,.25])
 
 
