@@ -117,14 +117,18 @@ if start == 0
         %stretch_factor = a_from_v(.95);
 
         %For Shaqfeh figure
-        stretch_factor = a_from_v(.95);
+        p.v = .95;
+        stretch_factor = a_from_v(p.v);
         P(:,3) = stretch_factor*P(:,3);
-        [P,M] = rotate_vesicle(P,M,.3,"y");
+        
+        
+
+        [P,M] = rotate_vesicle(P,M,.3325,"y");
         
     end
 
     geo = Geometry(M, P);
-    
+    fprintf("Reduced volume initial: %.9f\n", reduced_volume(geo));
     if p.initial_remesh && hasRemesher
         disp('Remeshing at start')
         geo_pre = geo;
@@ -612,9 +616,9 @@ for t = (start + 1):p.T
         geo = Geometry(M, P);
         
         if true
-            fprintf("Reduced volume before correction: %.9f\n", reduced_volume(geo));
-        [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
-        fprintf("Reduced volume after correction: %.9f\n", reduced_volume(geo));
+            %fprintf("Reduced volume before correction: %.9f\n", reduced_volume(geo));
+            [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
+            %fprintf("Reduced volume after correction: %.9f\n", reduced_volume(geo));
         end
 
         [velocity, f] = map_data(geo, geo_pre, velocity, f);

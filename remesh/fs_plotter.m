@@ -7,9 +7,9 @@ dt = 1e-1;
 k = 1000;
 Gamma = 0;
 
-Sd = 1e-3;
+Sd = 1e-6;
 Da = 0;
-gamy =3.31e-3;
+gamy = 8e-7;
 
 plot_stride = 1;
 
@@ -34,7 +34,7 @@ view_rotation_axis = [0, 1, 0];
 view_rotation_center = [0, 0, 0];
 alph = .9;
 edge_color = [.3, .3, .3];
-lighting_options.enabled = true;
+lighting_options.enabled = false;
 lighting_options.face_lighting = 'gouraud'; % Options: 'none', 'flat', or 'gouraud'.
 lighting_options.ambient_strength = 0.35;
 lighting_options.diffuse_strength = 0.75;

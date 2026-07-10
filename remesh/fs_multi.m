@@ -117,10 +117,13 @@ if start == 0
         %stretch_factor = a_from_v(.95);
 
         %For Shaqfeh figure
-        p.v = .95;
+        p.v = .8635;
         stretch_factor = a_from_v(p.v);
         P(:,3) = stretch_factor*P(:,3);
-        [P,M] = rotate_vesicle(P,M,.3125,"y");
+        
+        phi0 = .145;
+
+        [P,M] = rotate_vesicle(P,M,.5-phi0,"y");
         
     end
 
