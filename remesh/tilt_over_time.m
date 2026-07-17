@@ -1,4 +1,4 @@
-close all; clc;
+close all; clc; clear;
 
 % Comparison to Shaqfeh and Zhao (2011) Figure 4, steady-state tilt angle
 % and deformation index of vesicles in shear flow
@@ -6,11 +6,12 @@ close all; clc;
 
 
 %%% Simulation selection
-% Edit these values to select runs from data/fs_batch_data.
+% Edit these values to select
+%  runs from data/fs_batch_data.
 Da = 0;
-Sd = [1e-6];
-gamy = [8e-7];
-v = .863;
+Sd = [1];
+gamy = [10];
+v = .8;
 
 % First geo timestep to include. Use 0 to include geo0.mat.
 time_start = 1;

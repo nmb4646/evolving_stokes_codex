@@ -1,5 +1,46 @@
 clear; close; clc;
 
+%%% Parameters
+figure_position = [600, 200, 1000, 700];
+figure_color = 'w';
+
+% Current-work simulation data to extract.
+broussinos_Sd = 1e-6;
+broussinos_Da = 0;
+broussinos_gamy_values = [8e-7,8e-6]; % Scalar or array, e.g. [4e-7, 8e-7, 1.2e-6].
+broussinos_v_values = [0.988940, 0.97734, 0.96597, 0.954817, 0.9438, ...
+    0.93314, 0.9226, 0.91227, 0.90213, 0.89217, 0.88240, 0.87280];
+broussinos_tf = "last"; % "last" or a numeric frame id, e.g. 200.
+
+x_limits = [0.05, 1.5];
+y_limits = [0.09, 0.25];
+axis_line_width = 1.25;
+axis_font_size = 18;
+axis_font_name = 'Helvetica';
+axis_font_weight = 'normal';
+
+curve_line_width = 1.5;
+scatter_marker_size = 100;
+scatter_line_width = 2;
+
+shaqfeh_color = 'k';
+misbah_color = 'k';
+kantsler_edge_color = 'k';
+broussinos_edge_color = 'r';
+broussinos_color_map = "lines";
+broussinos_color_order = []; % Optional nGamy x 3 RGB matrix. Leave [] to use broussinos_color_map.
+
+title_text = "Membrane excess area vs tilt angle, \chi = 8";
+title_font_size = 30;
+title_font_weight = 'normal';
+x_label_text = "Membrane excess area";
+y_label_text = "Tilt angle \psi/\pi";
+label_font_size = 22;
+label_font_weight = 'normal';
+
+legend_font_size = 20;
+legend_location = 'northeast';
+
 shaqfeh_data = [0.09142212189616253, 0.21728650137741048
 0.1574492099322799, 0.20695592286501377
 0.21839729119638826, 0.1993801652892562
@@ -34,19 +75,200 @@ misbah_data=[0.08803611738148984, 0.21694214876033058
 1.1580135440180586, 0.11225895316804407
 1.3205417607223475, 0.09951790633608816];
 
-broussinos_data = [.45, .17875;
-.1, .2156;
-.8, .15;
-1 .1405];
+[broussinos_data, broussinos_gamy_by_point] = extract_broussinos_data( ...
+    broussinos_Sd, broussinos_Da, broussinos_gamy_values, ...
+    broussinos_v_values, broussinos_tf);
 
-plot(shaqfeh_data(:,1),shaqfeh_data(:,2),'k',LineWidth=1.5,DisplayName="Zhao & Shaqfeh simulations"); hold on;
-plot(misbah_data(:,1),misbah_data(:,2),'k',LineStyle='--',LineWidth=1.5,DisplayName="Misbah perturbation theory");
-scatter(kantsler_data(:,1),kantsler_data(:,2),100,LineWidth=2,MarkerEdgeColor='k',DisplayName="Kantsler & Steinberg measurements")
-scatter(broussinos_data(:,1),broussinos_data(:,2),100,LineWidth=2,MarkerEdgeColor='g',DisplayName="My measurements")
+fig = figure("Color", figure_color, "Position", figure_position);
+ax = axes(fig);
+hold(ax, "on");
 
-set(gcf,"Position",[600,200,1000,700])
-title("Membrane excess area vs tilt angle, \chi = 8",'Interpreter','tex',FontSize=30)
-xlim([0,1.5]); ylim([0.1,.25])
+plot(ax, shaqfeh_data(:,1), shaqfeh_data(:,2), ...
+    Color=shaqfeh_color, LineWidth=curve_line_width, ...
+    DisplayName="Zhao & Shaqfeh simulations");
+plot(ax, misbah_data(:,1), misbah_data(:,2), ...
+    Color=misbah_color, LineStyle='--', LineWidth=curve_line_width, ...
+    DisplayName="Misbah perturbation theory");
+scatter(ax, kantsler_data(:,1), kantsler_data(:,2), scatter_marker_size, ...
+    LineWidth=scatter_line_width, MarkerEdgeColor=kantsler_edge_color, ...
+    DisplayName="Kantsler & Steinberg measurements");
+plot_broussinos_scatter(ax, broussinos_data, broussinos_gamy_by_point, ...
+    broussinos_gamy_values, broussinos_color_order, broussinos_color_map, ...
+    broussinos_edge_color, scatter_marker_size, scatter_line_width);
 
+title(ax, title_text, Interpreter='tex', FontSize=title_font_size, ...
+    FontWeight=title_font_weight);
+xlabel(ax, x_label_text, FontSize=label_font_size, FontWeight=label_font_weight);
+ylabel(ax, y_label_text, Interpreter='tex', FontSize=label_font_size, ...
+    FontWeight=label_font_weight);
+xlim(ax, x_limits);
+ylim(ax, y_limits);
+set(ax, LineWidth=axis_line_width, FontSize=axis_font_size, ...
+    FontName=axis_font_name, FontWeight=axis_font_weight);
+box on;
+legend(ax, FontSize=legend_font_size, Location=legend_location);
 
-legend(fontsize=20);
+function [broussinos_data, gamy_by_point] = extract_broussinos_data(Sd, Da, gamy_values, v_values, tf)
+    script_dir = fileparts(mfilename("fullpath"));
+    if strlength(script_dir) == 0
+        script_dir = pwd;
+    end
+    remesh_dir = find_remesh_dir(script_dir);
+    addpath(remesh_dir);
+    data_dir = find_data_dir(script_dir, remesh_dir);
+
+    gamy_values = gamy_values(:).';
+    v_values = v_values(:).';
+    broussinos_data = NaN(numel(gamy_values) * numel(v_values), 2);
+    gamy_by_point = NaN(numel(gamy_values) * numel(v_values), 1);
+
+    row = 0;
+    for g = 1:numel(gamy_values)
+        gamy = gamy_values(g);
+        for i = 1:numel(v_values)
+            row = row + 1;
+            v = v_values(i);
+            run_tag = make_run_tag(Sd, Da, gamy, v);
+            folder = fullfile(data_dir, run_tag);
+            frames = list_geo_frames(folder);
+            if isempty(frames)
+                warning("No geo*.mat files found for gamy = %.6g, v = %.6g in %s", ...
+                    gamy, v, folder);
+                continue
+            end
+
+            frame_id = select_frame(frames, tf);
+            if isempty(frame_id)
+                warning("Requested frame %s not found for gamy = %.6g, v = %.6g in %s", ...
+                    string(tf), gamy, v, folder);
+                continue
+            end
+
+            data = load(fullfile(folder, sprintf("geo%d.mat", frame_id)), "M", "P");
+            geo = Geometry(data.M, data.P);
+            tilt = vesicleTiltDeformation(data.P, data.M, 1, 3, "ray_intersection");
+            broussinos_data(row, :) = [excess_area(geo), tilt.psi_over_pi];
+            gamy_by_point(row) = gamy;
+        end
+    end
+
+    valid = all(isfinite(broussinos_data), 2) & isfinite(gamy_by_point);
+    broussinos_data = broussinos_data(valid, :);
+    gamy_by_point = gamy_by_point(valid);
+end
+
+function plot_broussinos_scatter(ax, data, gamy_by_point, gamy_values, color_order, color_map, ...
+        single_edge_color, marker_size, line_width)
+    if isempty(data)
+        warning("No Broussinos/current-work data was extracted.");
+        return
+    end
+
+    gamy_values = gamy_values(:).';
+    if isempty(color_order)
+        if isscalar(gamy_values)
+            color_order = single_edge_color;
+        else
+            color_order = feval(char(color_map), numel(gamy_values));
+        end
+    end
+
+    for g = 1:numel(gamy_values)
+        gamy = gamy_values(g);
+        mask = abs(gamy_by_point - gamy) <= max(eps(abs(gamy)), eps);
+        if ~any(mask)
+            continue
+        end
+
+        if ischar(color_order) || isstring(color_order)
+            marker_color = color_order;
+        else
+            color_idx = mod(g - 1, size(color_order, 1)) + 1;
+            marker_color = color_order(color_idx, :);
+        end
+
+        if isscalar(gamy_values)
+            display_name = "Current work";
+        else
+            display_name = sprintf("Current work, \\gamma = %.3g", gamy);
+        end
+
+        scatter(ax, data(mask, 1), data(mask, 2), marker_size, ...
+            LineWidth=line_width, MarkerEdgeColor=marker_color, ...
+            DisplayName=display_name);
+    end
+end
+
+function frame_id = select_frame(frames, tf)
+    frame_id = [];
+    if isstring(tf) || ischar(tf)
+        tf = string(tf);
+        if lower(tf) == "last"
+            frame_id = max(frames);
+            return
+        end
+        requested = str2double(tf);
+    else
+        requested = double(tf);
+    end
+
+    if ismember(requested, frames)
+        frame_id = requested;
+    end
+end
+
+function frames = list_geo_frames(folder)
+    files = dir(fullfile(folder, "geo*.mat"));
+    frames = zeros(numel(files), 1);
+    keep = false(numel(files), 1);
+    for i = 1:numel(files)
+        token = regexp(files(i).name, "^geo(\d+)\.mat$", "tokens", "once");
+        if ~isempty(token)
+            frames(i) = str2double(token{1});
+            keep(i) = true;
+        end
+    end
+    frames = sort(frames(keep));
+end
+
+function run_tag = make_run_tag(Sd, Da, gamy, v)
+    run_tag = sprintf("Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e", Sd, Da, gamy, v);
+    run_tag = strrep(run_tag, "+", "p");
+    run_tag = strrep(run_tag, "-", "m");
+end
+
+function remesh_dir = find_remesh_dir(script_dir)
+    candidates = string({script_dir, pwd, fullfile(pwd, "remesh")});
+    geometry_path = which("Geometry");
+    if strlength(geometry_path) > 0
+        candidates(end + 1) = string(fileparts(geometry_path));
+    end
+
+    for i = 1:numel(candidates)
+        candidate = candidates(i);
+        if isfile(fullfile(candidate, "Geometry.m"))
+            remesh_dir = char(candidate);
+            return
+        end
+    end
+
+    error("Could not locate remesh directory. Run from the repo root or add remesh/ to the MATLAB path.");
+end
+
+function data_dir = find_data_dir(script_dir, remesh_dir)
+    candidates = string({
+        fullfile(remesh_dir, "data", "fs_batch_data"), ...
+        fullfile(script_dir, "data", "fs_batch_data"), ...
+        fullfile(pwd, "data", "fs_batch_data"), ...
+        fullfile(pwd, "remesh", "data", "fs_batch_data")});
+
+    for i = 1:numel(candidates)
+        candidate = candidates(i);
+        if isfolder(candidate)
+            data_dir = char(candidate);
+            return
+        end
+    end
+
+    error("Could not locate data/fs_batch_data. Checked:%s", sprintf("\n  %s", candidates));
+end

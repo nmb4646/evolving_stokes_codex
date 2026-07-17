@@ -7,18 +7,19 @@ dt = 1e-1;
 k = 1000;
 Gamma = 0;
 
-Sd = 1e-6;
+Sd = 3;
 Da = 0;
-gamy = 8e-7;
-v = 9.89e-1;
+gamy = 10*Sd;
+v = .8;
 
 plot_stride = 1;
 
-override_ids = [];
+override_ids = [500:540];
 
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e', Sd, Da, gamy, v);
 run_tag = strrep(run_tag, '+', 'p');
 run_tag = strrep(run_tag, '-', 'm');
+
 
 if ~exist('directory', 'var')
     directory = "./data/fs_batch_data/";
@@ -28,7 +29,7 @@ name = directory + run_tag + ".gif";
 fprintf("Plotting %s\n", folder);
 fprintf("Writing %s\n", name);
 
-view_azi = 179;
+view_azi = 90;
 view_ele = 1;
 view_rotation_angle_deg = 0;
 view_rotation_axis = [0, 1, 0];
@@ -91,10 +92,40 @@ if ~exist('color_mode', 'var')
     % "surface" uses uniform_color and hides triangle edges.
     color_mode = "curvature";
 end
+if ~exist('permeation_smoothing_enabled', 'var')
+    % Visual-only one-ring neighbor averaging for permeation coloring.
+    permeation_smoothing_enabled = true;
+end
+if ~exist('permeation_smoothing_steps', 'var')
+    % Number of repeated averaging passes. Use 0 to disable.
+    permeation_smoothing_steps = 2;
+end
+if ~exist('permeation_smoothing_self_weight', 'var')
+    % Weight assigned to the current vertex during each neighbor average.
+    permeation_smoothing_self_weight = 1;
+end
+if ~exist('curvature_smoothing_enabled', 'var')
+    % Visual-only one-ring neighbor averaging for curvature coloring.
+    curvature_smoothing_enabled = true;
+end
+if ~exist('curvature_smoothing_steps', 'var')
+    % Number of repeated averaging passes. Use 0 to disable.
+    curvature_smoothing_steps = 2;
+end
+if ~exist('curvature_smoothing_self_weight', 'var')
+    % Weight assigned to the current vertex during each neighbor average.
+    curvature_smoothing_self_weight = 1;
+end
 if ~exist('uniform_color', 'var')
     uniform_color = [0.75, 0.78, 0.82];
 end
 color_mode = convertCharsToStrings(color_mode);
+color_smoothing.curvature.enabled = curvature_smoothing_enabled;
+color_smoothing.curvature.steps = curvature_smoothing_steps;
+color_smoothing.curvature.self_weight = curvature_smoothing_self_weight;
+color_smoothing.permeation.enabled = permeation_smoothing_enabled;
+color_smoothing.permeation.steps = permeation_smoothing_steps;
+color_smoothing.permeation.self_weight = permeation_smoothing_self_weight;
 use_uniform_color = any(color_mode == ["uniform", "surface", "uniform_surface"]);
 hide_mesh_edges = any(color_mode == ["surface", "uniform_surface"]);
 if hide_mesh_edges
@@ -141,7 +172,7 @@ P_view = apply_view_rotation(geoj.P, view_rotation);
 if use_uniform_color
     C = [];
 else
-    C = frame_color_data(geoj, geo, color_mode, gamy);
+    C = frame_color_data(geoj, geo, color_mode, gamy, color_smoothing);
     [color_min, color_max] = percentile_bounds(C, 2, 98);
     if color_max <= color_min
         color_max = color_min + eps;
@@ -243,13 +274,17 @@ for frame_idx = 1:numel(plot_ids)
     
     disp("Deformation index: " + tilt_out.D)
 
-    disp("Reduced volume: "+reduced_volume(geo))
+    %disp("Reduced volume: "+reduced_volume(geo))
+
+    fprintf("Reduced volume: %.9f\n", reduced_volume(geo));
 
     %disp((geo.volume - 4/3*pi)/(4/3*pi));
     fprintf("Volume: %.9f\n", geo.volume/volume0);
 
+    fprintf("Willmore: %.9f\n", geo.willmore_energy(1));
+
     if ~use_uniform_color
-        C = frame_color_data(geoj, geo, color_mode, gamy);
+        C = frame_color_data(geoj, geo, color_mode, gamy, color_smoothing);
     end
 
     if use_uniform_color
@@ -291,7 +326,7 @@ for frame_idx = 1:numel(plot_ids)
         streamline_handles = gobjects(0);
     end
     if ~use_uniform_color
-        %colorbar;%clim([0 2])
+        %colorbar;clim([-.1 .1])
     end
     drawnow;
 
@@ -380,12 +415,17 @@ function V_view = rotate_view_vectors(V, view_rotation)
     V_view = V * view_rotation.R.';
 end
 
-function C = frame_color_data(geoj, geo, color_mode, ~)
+function C = frame_color_data(geoj, geo, color_mode, ~, color_smoothing)
+    if nargin < 5
+        color_smoothing = default_color_smoothing();
+    end
+
     switch string(color_mode) 
         case {"uniform", "surface", "uniform_surface"}
             C = [];
         case "curvature"
             C = geo.v_mean_curvature ./ geo.v_area;
+            C = maybe_smooth_color_data(C, geo, color_smoothing.curvature);
         case {"permeation", "permeation_velocity", "permeation_norm"}
             if ~isfield(geoj, 'f')
                 error("Cannot color by permeation velocity because this frame does not contain f.");
@@ -396,8 +436,53 @@ function C = frame_color_data(geoj, geo, color_mode, ~)
                 Gamma = 0;
             end
             C = abs(Gamma + dot(geoj.f, geo.v_normal, 2));
+            C = maybe_smooth_color_data(C, geo, color_smoothing.permeation);
         otherwise
             error("Unknown color_mode '%s'. Use 'curvature', 'permeation', 'uniform', or 'surface'.", color_mode);
+    end
+end
+
+function color_smoothing = default_color_smoothing()
+    color_smoothing.curvature.enabled = false;
+    color_smoothing.curvature.steps = 0;
+    color_smoothing.curvature.self_weight = 1;
+    color_smoothing.permeation.enabled = false;
+    color_smoothing.permeation.steps = 0;
+    color_smoothing.permeation.self_weight = 1;
+end
+
+function C = maybe_smooth_color_data(C, geo, options)
+    if options.enabled
+        C = smooth_vertex_scalar_by_neighbors(C, geo, options.steps, options.self_weight);
+    end
+end
+
+function C = smooth_vertex_scalar_by_neighbors(C, geo, n_steps, self_weight)
+    n_steps = max(0, round(n_steps));
+    if n_steps == 0
+        return
+    end
+    if self_weight < 0
+        error("Color smoothing self-weight must be nonnegative.");
+    end
+
+    C = C(:);
+    mesh = geo.mesh;
+    adjacency = sparse( ...
+        [mesh.he_src; mesh.he_dst], ...
+        [mesh.he_dst; mesh.he_src], ...
+        1, mesh.n_v, mesh.n_v);
+    adjacency = spones(adjacency);
+    adjacency = adjacency - spdiags(diag(adjacency), 0, mesh.n_v, mesh.n_v);
+    degree = full(sum(adjacency, 2));
+    denom = self_weight + degree;
+    isolated = denom == 0;
+    denom(isolated) = 1;
+
+    for step = 1:n_steps
+        C_new = (self_weight * C + adjacency * C) ./ denom;
+        C_new(isolated) = C(isolated);
+        C = C_new;
     end
 end
 

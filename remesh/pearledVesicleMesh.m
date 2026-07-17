@@ -28,7 +28,7 @@ R2 = q;
 
 % Internal automatic geometry.
 joinFrac   = 0.68;   % where we leave each sphere
-neckFrac   = 0.24;   % neck radius relative to smaller sphere
+neckFrac   = 0.84;   % neck radius relative to smaller sphere
 blendScale = 1.0;   % larger = smoother, longer neck transition
 
 rA = joinFrac * R1;

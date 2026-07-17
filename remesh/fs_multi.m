@@ -119,15 +119,23 @@ if start == 0
         % For permeability figures
         %stretch_factor = a_from_v(.95);
 
-        %For Shaqfeh figure
-        stretch_factor = a_from_v(p.v);
-        P(:,3) = stretch_factor*P(:,3);
+        %For specific reduced volume
+        % stretch_factor = a_from_v(p.v);
+        % P(:,3) = stretch_factor*P(:,3);
+        % 
+        % %%For shaqfeh fige 8
+        % geo_upright=Geometry(M,P);
+        % phi0 = phi0_from_excess(excess_area(geo_upright));
+        % [P,M] = rotate_vesicle(P,M,.5-phi0,"y");
 
-        geo_upright=Geometry(M,P);
-        
-        phi0 = phi0_from_excess(excess_area(geo_upright));
+        % For narsimhan figure 4
+        %[M,P] = initial_dumbbell(.35);
 
-        [P,M] = rotate_vesicle(P,M,.5-phi0,"y");
+        % For BGN figure
+
+        biconcave = load("biconcave.mat");
+        P = biconcave.P;M=biconcave.M;
+        [P,M] = rotate_vesicle(P,M,.5,"y");
         
     end
 
@@ -136,7 +144,7 @@ if start == 0
     if p.initial_remesh && hasRemesher
         disp('Remeshing at start')
         geo_pre = geo;
-        [M, P] = remeshing(int32(M), P, int32([]), mean(geo.he_length), int32(100));
+        [M, P] = remeshing(int32(M), P, int32([]), 2.1*mean(geo.he_length), int32(100));
         M = cast(M, "double");
         geo = Geometry(M, P);
         [P, geo] = newton_correct_volume(geo, geo_pre.area, geo_pre.volume);
@@ -241,7 +249,7 @@ else
         p.conserve_slp_volume = false;
     end
     if ~isfield(p, 'bending_hessian_mode')
-        p.bending_hessian_mode = "bih";
+        p.bending_hessian_mode = "exact";
     end
     if ~isfield(p, 'line_search')
         p.line_search = false;
@@ -309,6 +317,7 @@ else
         r.edge_length = p.remesh_size * mean(geo.he_length);
         geo_pre = geo;
         [M, P] = remeshing(int32(M), P, int32([]), r.edge_length, int32(20));
+
         M = cast(M, "double");
         geo = Geometry(M, P);
 
@@ -327,7 +336,7 @@ else
     % o.tol_b = 1e-8;
     % o.tol_c = 1e-7;
     % o.tol_d = 1e-7;
-    %p.bending_hessian_mode = "bih";
+        p.bending_hessian_mode = "bih";
 
     %.h = o.h*3;
     %o.eta = 0;
@@ -338,6 +347,7 @@ else
 
 end
 
+stuck_remesh_shrink = true;
 for t = (start + 1):p.T
     tic;
     
@@ -420,7 +430,7 @@ for t = (start + 1):p.T
         b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
         P_bie = reshape(P0, [], 3);
         geo_bie = Geometry(M, P_bie);
-        u_background = shear_flow(P_bie, p.gamy);%poiseuille_flow(P_bie,p.gamy,12.5);%shear_flow(P_bie, p.gamy);
+        u_background = shear_flow(P_bie,p.gamy);%shear_flow(P_bie, p.gamy);%poiseuille_flow(P_bie,p.gamy,12.5);%shear_flow(P_bie, p.gamy);
         c = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
 
 
@@ -572,29 +582,69 @@ for t = (start + 1):p.T
                 t, j, ls_iter, alpha, eps_b, eps_c, eps_d, darea);
         end
 
-        if eps_b > eps_b_prev
-            eps_b_rise_count = eps_b_rise_count + 1;
-            if eps_b_rise_count > 6
-                if ~supress_outputs
-                    fprintf("eps_b monotonically increasing; halving o.h and restarting t = %d\n", t);
-                end
-                p.chi = 0.8 * p.chi;
-                lambda = lambda_restart;
-                f = f_restart;
-                P = reshape(P0 + p.dt * velocity, [], 3);
-                geo = Geometry(M, P);
-                eps_b = Inf;
-                eps_c = Inf;
-                eps_d = Inf;
-                eps_b_prev = Inf;
-                eps_b_rise_count = 0;
-                j = 0;
-                alpha_mem = o.h;
-                continue
+        if p.line_search && (ls_iter >= p.line_search_max_iter) && (alpha == 0)
+            if ~supress_outputs
+                fprintf("Optimizer stuck. Remeshing and restarting t = %d\n", t);
             end
-        else
+            lambda = lambda_restart;
+            f = f_restart;
+            P = reshape(P0, [], 3);
+
+            geo_pre = Geometry(M, P);
+            if stuck_remesh_shrink
+                stuck_remesh_factor = 0.97;
+            else
+                stuck_remesh_factor = 1.05;
+            end
+            stuck_remesh_shrink = ~stuck_remesh_shrink;
+            [M, P] = remeshing(int32(M), P, int32([]), ...
+                stuck_remesh_factor * mean(geo_pre.he_length), int32(20));
+    
+            M = cast(M, "double");
+
+            [P, ~] = valence_neighbor_average_smooth(M, P, ...
+            [5, 7], 1, .25);
+    
+            geo = Geometry(M, P);
+            [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
+            [velocity, f] = map_data(geo, geo_pre, velocity, f);
+            slp_cache = stokeslet_SLP_triangle_setup(M);
+            disp("Old: " + length(geo_pre.V))
+            disp("New: " + length(geo.V))
+
+            P0 = P(:);
+            [~, ~, ~, ~, KTK, DTD] = geo.evolving_operators();
+            mass0 = spdiags(geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
+            mass0_inv = spdiags(1 ./ geo.v_area, 0, geo.mesh.n_v, geo.mesh.n_v);
+            bih = geo.lap * mass0_inv * geo.lap;
+            bih = blkdiag(bih, bih, bih);
+            hess_base = 2 * (KTK + p.k * DTD);
+            hess_regularization = 0* r.edge_length^(-2) * blkdiag(mass0, mass0, mass0);
+            S = stokeslet_SLP_triangle_matrix(P, M, slp_cache);
+            if p.conserve_slp_volume
+                S = project_slp_matrix_zero_flux(S, geo);
+            end
+            N = normal_projection_matrix(geo.v_normal);
+            NN = blkdiag(mass0, mass0, mass0) * N;
+            n_state = numel(P);
+            M3 = blkdiag(mass0, mass0, mass0);
+            I_state = speye(n_state);
+            bie_df = -p.Sd * (S + p.Da * N);
+            lambda_restart = lambda;
+            f_restart = f;
+            P(:) = P0 + p.dt * velocity;
+            geo = Geometry(M, P);
+            eps_b = Inf;
+            eps_c = Inf;
+            eps_d = Inf;
+            eps_b_prev = Inf;
             eps_b_rise_count = 0;
+            j = 0;
+            ls_iter = 0;
+            alpha_mem = o.h;
+            continue
         end
+
         eps_b_prev = eps_b;
         j = j + 1;
     end
@@ -616,6 +666,7 @@ for t = (start + 1):p.T
             fprintf("Remeshing. t = %d \n", t);
         end
         [M, P] = remeshing(int32(M), P, int32([]), r.edge_length, int32(r.n_iter));
+
         M = cast(M, "double");
         geo = Geometry(M, P);
         
@@ -639,6 +690,10 @@ for t = (start + 1):p.T
         fprintf("Save geo%d.mat at j = %d, eps_b = %0.4g, eps_c = %0.4g, eps_d = %0.4g, total time: %0.4f\n", ...
             t, j, eps_b, eps_c, eps_d, p.total_time);
     end
+
+    % if reduced_volume(geo) > .998 % For timescales of permeable relaxation test
+    %     break
+    % end
 end
 
 function target_volume = remesh_target_volume(geo_pre, p)
