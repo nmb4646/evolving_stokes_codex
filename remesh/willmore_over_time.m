@@ -1,38 +1,27 @@
 close all; clc; clear;
 
-% Comparison to Shaqfeh and Zhao (2011) Figure 4, steady-state tilt angle
-% and deformation index of vesicles in shear flow
-
-
+% Plot Helfrich/Willmore bending energy over time for fs_multi output.
 
 %%% Simulation selection
-% Edit these values to select
-%  runs from data/fs_batch_data.
+% Edit these values to select runs from data/fs_batch_data.
 Da = 0;
-Sd = [1e-6];
-gamy = [8.01e-6];
-v = .873;
+Sd = [3e2];
+gamy = 0;
+v = .97;
 
 % First geo timestep to include. Use 0 to include geo0.mat.
-time_start = 100;
+time_start = 0;
 % Last geo timestep to include. Use inf to include all later frames.
 time_final = inf;
+% Options: "index" plots n; "time" plots t = n * dt from saved p.dt.
+time_axis_mode = "time";
 
-%%% Tilt calculation
-% For shear_flow.m, u_x = gamy * z, so flow_dim = 1 and grad_dim = 3.
-flow_dim = 1;
-grad_dim = 3;
-axis_length_method = "ray_intersection"; % Options: "ray_intersection" or "projection".
-
-% If true, remove +/- pi branch jumps using the axis-periodic angle.
-% Leave false to match the wrapped psi/pi values printed by fs_plotter.
-tilt_options.unwrap = false;
+%%% Energy calculation
+energy_Kb = 1; % Bending modulus passed to Geometry.willmore_energy.
+subtract_initial_energy = false; % If true, plot E(t) - E(0) for each run.
+normalize_by_initial_energy = false; % If true, plot E(t) / E(0) for each run.
 
 %%% Visual settings
-% Options: "tilt", "D", or ["tilt", "D"].
-visual.metrics = ["tilt", "D"];
-% Options: "over_pi" matches fs_plotter, "radians", or "degrees".
-visual.angle_units = "over_pi";
 visual.line_width = 2.0;
 visual.marker = "none";
 visual.marker_size = 5;
@@ -43,9 +32,8 @@ visual.x_scale = "linear"; % Options: "linear" or "log".
 visual.y_scale = "linear"; % Options: "linear" or "log".
 visual.show_grid = false;
 visual.save_figure = false;
-visual.output_file = fullfile("data", "tilt_over_time.png");
+visual.output_file = fullfile("data", "willmore_over_time.png");
 visual.output_resolution = 300;
-visual.D_label = "Deformation index D";
 
 script_dir = fileparts(mfilename("fullpath"));
 remesh_dir = find_remesh_dir(script_dir);
@@ -60,26 +48,13 @@ multiple_gamy = numel(gamy_values) > 1;
 multiple_v = numel(v_values) > 1;
 run_count = numel(sd_values) * numel(gamy_values) * numel(v_values);
 multiple_runs = run_count > 1;
-metrics = normalize_metrics(visual.metrics);
-plot_count = numel(metrics);
 
 fig = figure("Color", "w", "Position", visual.figure_position);
-if plot_count == 1
-    axes_list = axes(fig);
-else
-    tiled = tiledlayout(fig, plot_count, 1, "TileSpacing", "compact", "Padding", "compact");
-    axes_list = gobjects(plot_count, 1);
-    for metric_idx = 1:plot_count
-        axes_list(metric_idx) = nexttile(tiled);
-    end
-end
-for metric_idx = 1:plot_count
-    hold(axes_list(metric_idx), "on");
-end
+ax = axes(fig);
+hold(ax, "on");
 
 legend_entries = strings(run_count, 1);
 x_label = "";
-metric_labels = strings(plot_count, 1);
 run_idx = 0;
 
 for sd_idx = 1:numel(sd_values)
@@ -96,12 +71,12 @@ for sd_idx = 1:numel(sd_values)
 
             fprintf("Loading %s\n", folder);
 
-            [x, x_label_current, tilt, D] = load_tilt_deformation_series(folder, flow_dim, grad_dim, ...
-                axis_length_method, tilt_options, time_start, time_final);
-            rate_x = x;
-            rate_x_label = x_label_current;
+            [x, x_label_current, energy] = load_willmore_series( ...
+                folder, energy_Kb, time_start, time_final, time_axis_mode);
             [x, x_label_current] = apply_time_scaling(x, x_label_current, ...
                 gamy_current, Sd_current, visual);
+            energy = apply_energy_scaling(energy, subtract_initial_energy, ...
+                normalize_by_initial_energy);
 
             if strlength(x_label) == 0
                 x_label = x_label_current;
@@ -109,52 +84,37 @@ for sd_idx = 1:numel(sd_values)
                 x_label = "Time / timestep";
             end
 
-            for metric_idx = 1:plot_count
-                [y, metric_labels(metric_idx)] = metric_to_plot_values( ...
-                    metrics(metric_idx), tilt, D, visual);
-                plot(axes_list(metric_idx), x, y, ...
-                    "LineWidth", visual.line_width, ...
-                    "Marker", visual.marker, ...
-                    "MarkerSize", visual.marker_size);
-            end
+            plot(ax, x, energy, ...
+                "LineWidth", visual.line_width, ...
+                "Marker", visual.marker, ...
+                "MarkerSize", visual.marker_size);
 
             legend_entries(run_idx) = make_legend_entry(Sd_current, gamy_current, v_current, ...
                 multiple_sd, multiple_gamy, multiple_v);
 
-            fprintf("Sd = %.8g, gamy = %.8g, v = %.8g, initial tilt: %.8g psi/pi, %.8g rad, %.8g deg\n", ...
-                Sd_current, gamy_current, v_current, tilt(1) / pi, tilt(1), rad2deg(tilt(1)));
-            fprintf("Sd = %.8g, gamy = %.8g, v = %.8g, final tilt:   %.8g psi/pi, %.8g rad, %.8g deg\n", ...
-                Sd_current, gamy_current, v_current, tilt(end) / pi, tilt(end), rad2deg(tilt(end)));
-            fprintf("Sd = %.8g, gamy = %.8g, v = %.8g, initial D: %.8g, final D: %.8g\n", ...
-                Sd_current, gamy_current, v_current, D(1), D(end));
-
-            if ~multiple_runs
-                print_mean_tilt_rate(tilt, rate_x, rate_x_label);
-            end
+            fprintf("Sd = %.8g, gamy = %.8g, v = %.8g, initial energy: %.12g, final energy: %.12g\n", ...
+                Sd_current, gamy_current, v_current, energy(1), energy(end));
         end
     end
 end
 
-for metric_idx = 1:plot_count
-    ax = axes_list(metric_idx);
-    ylabel(ax, metric_labels(metric_idx));
-    set(ax, "XScale", visual.x_scale);
-    set(ax, "YScale", visual.y_scale);
+xlabel(ax, x_label);
+ylabel(ax, energy_label(subtract_initial_energy, normalize_by_initial_energy));
+set(ax, "XScale", visual.x_scale);
+set(ax, "YScale", visual.y_scale);
 
-    if visual.show_grid
-        grid(ax, "on");
-    end
-    box(ax, "on");
+if visual.show_grid
+    grid(ax, "on");
 end
-xlabel(axes_list(end), x_label);
+box(ax, "on");
 
 if multiple_runs
-    title(axes_list(1), sprintf("%s over time: %s", ...
-        metrics_title(metrics), comparison_title_suffix(Da, sd_values, gamy_values, v_values)));
-    legend(axes_list(1), legend_entries, "Location", "best");
+    title(ax, sprintf("Helfrich energy over time: %s", ...
+        comparison_title_suffix(Da, sd_values, gamy_values, v_values)));
+    legend(ax, legend_entries, "Location", "best");
 else
-    title(axes_list(1), sprintf("%s over time: Sd = %.4g, Da = %.4g, gamy = %.4g, v = %.4g", ...
-        metrics_title(metrics), sd_values, Da, gamy_values, v_values));
+    title(ax, sprintf("Helfrich energy over time: Sd = %.4g, Da = %.4g, gamy = %.4g, v = %.4g", ...
+        sd_values, Da, gamy_values, v_values));
 end
 
 if visual.save_figure
@@ -162,8 +122,7 @@ if visual.save_figure
     fprintf("Saved %s\n", visual.output_file);
 end
 
-function [x, x_label, tilt, D] = load_tilt_deformation_series(folder, flow_dim, grad_dim, ...
-        axis_length_method, tilt_options, time_start, time_final)
+function [x, x_label, energy] = load_willmore_series(folder, energy_Kb, time_start, time_final, time_axis_mode)
     files = dir(fullfile(folder, "geo*.mat"));
     if isempty(files)
         error("No geo*.mat files found in %s", folder);
@@ -190,8 +149,7 @@ function [x, x_label, tilt, D] = load_tilt_deformation_series(folder, flow_dim, 
             time_start, time_final, folder);
     end
 
-    tilt = zeros(numel(frame_ids), 1);
-    D = zeros(numel(frame_ids), 1);
+    energy = zeros(numel(frame_ids), 1);
     dt = NaN;
 
     for i = 1:numel(frame_ids)
@@ -202,21 +160,48 @@ function [x, x_label, tilt, D] = load_tilt_deformation_series(folder, flow_dim, 
             dt = data.p.dt;
         end
 
-        tilt_out = vesicleTiltDeformation(data.P, data.M, flow_dim, grad_dim, axis_length_method);
-        tilt(i) = tilt_out.psi;
-        D(i) = tilt_out.D;
+        geo = Geometry(data.M, data.P);
+        energy(i) = geo.willmore_energy(energy_Kb);
     end
 
-    if tilt_options.unwrap
-        tilt = 0.5 * unwrap(2 * tilt);
+    time_axis_mode = lower(string(time_axis_mode));
+    switch time_axis_mode
+        case {"index", "n", "step", "timestep"}
+            x = frame_ids;
+            x_label = "Timestep n";
+        case {"time", "t", "physical_time"}
+            if isnan(dt)
+                error("Cannot use time_axis_mode = 'time' because p.dt was not found in %s.", folder);
+            end
+            x = frame_ids * dt;
+            x_label = "Time t = n dt";
+        otherwise
+            error("Unknown time_axis_mode '%s'. Use 'index' or 'time'.", time_axis_mode);
+    end
+end
+
+function energy = apply_energy_scaling(energy, subtract_initial, normalize_by_initial)
+    if subtract_initial && normalize_by_initial
+        error("Use only one of subtract_initial_energy or normalize_by_initial_energy.");
     end
 
-    if isnan(dt)
-        x = frame_ids;
-        x_label = "Timestep";
+    if subtract_initial
+        energy = energy - energy(1);
+    elseif normalize_by_initial
+        if energy(1) == 0
+            error("Cannot normalize by initial energy because E(0) is zero.");
+        end
+        energy = energy / energy(1);
+    end
+end
+
+function label = energy_label(subtract_initial, normalize_by_initial)
+    if subtract_initial
+        label = "Helfrich energy E - E_0";
+    elseif normalize_by_initial
+        label = "Helfrich energy E / E_0";
     else
-        x = frame_ids * dt;
-        x_label = "Time";
+        label = "Helfrich energy";
     end
 end
 
@@ -241,10 +226,10 @@ function [x, x_label] = apply_time_scaling(x, base_label, gamy, Sd, visual)
         x = x / Sd;
     end
 
-    if base_label == "Time"
+    if startsWith(base_label, "Time")
         quantity = "time";
         symbol = "t";
-    elseif base_label == "Timestep"
+    elseif startsWith(base_label, "Timestep")
         quantity = "timestep";
         symbol = "n";
     else
@@ -261,88 +246,6 @@ function [x, x_label] = apply_time_scaling(x, base_label, gamy, Sd, visual)
     end
 
     x_label = "Scaled " + quantity + " (" + expression + ")";
-end
-
-function print_mean_tilt_rate(tilt, x, x_label)
-    if numel(tilt) < 2
-        fprintf("Mean dphi/dt unavailable: fewer than two plotted frames.\n");
-        return
-    end
-
-    dx = diff(x);
-    dphi = diff(tilt);
-    valid = isfinite(dx) & isfinite(dphi) & dx ~= 0;
-
-    if ~any(valid)
-        fprintf("Mean dphi/dt unavailable: no valid finite-difference intervals.\n");
-        return
-    end
-
-    mean_rate = mean(abs(dphi(valid) ./ dx(valid)));
-    mean_rate_over_pi = mean_rate / pi;
-
-    if x_label == "Time"
-        fprintf("Mean absolute dphi/dt over plotted interval: %.8g rad/time, %.8g abs(psi/pi)/time\n", ...
-            mean_rate, mean_rate_over_pi);
-    else
-        fprintf("Mean absolute dphi/dt unavailable because p.dt was not found; mean absolute dphi/dstep: %.8g rad/step, %.8g abs(psi/pi)/step\n", ...
-            mean_rate, mean_rate_over_pi);
-    end
-end
-
-function metrics = normalize_metrics(metrics)
-    metrics = lower(string(metrics));
-    if isempty(metrics)
-        error('visual.metrics must include "tilt", "D", or both.');
-    end
-
-    for i = 1:numel(metrics)
-        switch metrics(i)
-            case {"tilt", "psi", "angle"}
-                metrics(i) = "tilt";
-            case {"d", "deformation", "deformation_index"}
-                metrics(i) = "D";
-            otherwise
-                error('Unknown visual metric "%s". Use "tilt", "D", or ["tilt", "D"].', metrics(i));
-        end
-    end
-    metrics = unique(metrics, "stable");
-end
-
-function [y, y_label] = metric_to_plot_values(metric, tilt, D, visual)
-    switch metric
-        case "tilt"
-            [y, y_label] = tilt_to_plot_values(tilt, visual.angle_units);
-        case "D"
-            y = D;
-            y_label = visual.D_label;
-    end
-end
-
-function [y, y_label] = tilt_to_plot_values(tilt, angle_units)
-    switch lower(string(angle_units))
-        case {"over_pi", "pi", "psi_over_pi"}
-            y = tilt / pi;
-            y_label = "Tilt angle (\psi/\pi)";
-        case {"radians", "rad"}
-            y = tilt;
-            y_label = "Tilt angle (rad)";
-        case {"degrees", "deg"}
-            y = rad2deg(tilt);
-            y_label = "Tilt angle (deg)";
-        otherwise
-            error("Unknown visual.angle_units '%s'. Use 'over_pi', 'radians', or 'degrees'.", angle_units);
-    end
-end
-
-function title_text = metrics_title(metrics)
-    if isequal(metrics, "tilt")
-        title_text = "Tilt";
-    elseif isequal(metrics, "D")
-        title_text = "Deformation";
-    else
-        title_text = "Tilt and deformation";
-    end
 end
 
 function run_tag = make_run_tag(Sd, Da, gamy, v)

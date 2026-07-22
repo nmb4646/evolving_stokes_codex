@@ -7,18 +7,19 @@ dt = 1e-1;
 k = 1000;
 Gamma = 0;
 
-Sd = 1;
+Sd = 3;
 Da = 0;
-gamy = 0;%10*Sd;
-v = 1;
+gamy = 30;
+v = .8;
 
 plot_stride = 1;
 
-override_ids = [];
+override_ids = [9];
 
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e', Sd, Da, gamy, v);
 run_tag = strrep(run_tag, '+', 'p');
 run_tag = strrep(run_tag, '-', 'm');
+
 
 if ~exist('directory', 'var')
     directory = "./data/fs_batch_data/";
@@ -28,7 +29,7 @@ name = directory + run_tag + ".gif";
 fprintf("Plotting %s\n", folder);
 fprintf("Writing %s\n", name);
 
-view_azi = 1;
+view_azi = -20;
 view_ele = 1;
 view_rotation_angle_deg = 0;
 view_rotation_axis = [0, 1, 0];
@@ -273,10 +274,14 @@ for frame_idx = 1:numel(plot_ids)
     
     disp("Deformation index: " + tilt_out.D)
 
-    disp("Reduced volume: "+reduced_volume(geo))
+    %disp("Reduced volume: "+reduced_volume(geo))
+
+    fprintf("Reduced volume: %.9f\n", reduced_volume(geo));
 
     %disp((geo.volume - 4/3*pi)/(4/3*pi));
     fprintf("Volume: %.9f\n", geo.volume/volume0);
+
+    fprintf("Willmore: %.9f\n", geo.willmore_energy(1));
 
     if ~use_uniform_color
         C = frame_color_data(geoj, geo, color_mode, gamy, color_smoothing);

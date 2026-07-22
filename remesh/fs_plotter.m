@@ -3,18 +3,18 @@ close all; clc; clear;
 % Barebones plotter for fs_multi output.
 % Override run_tag/directory/name before running if needed.
 
-dt = 1e-1;
+
 k = 1000;
 Gamma = 0;
 
-Sd = 3;
+Sd = 3e2;
 Da = 0;
-gamy = 10*Sd;
-v = .8;
+gamy = 0;
+v = .97;
 
 plot_stride = 1;
 
-override_ids = [500:540];
+override_ids = [];
 
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e', Sd, Da, gamy, v);
 run_tag = strrep(run_tag, '+', 'p');
@@ -29,7 +29,7 @@ name = directory + run_tag + ".gif";
 fprintf("Plotting %s\n", folder);
 fprintf("Writing %s\n", name);
 
-view_azi = 90;
+view_azi = -20;
 view_ele = 1;
 view_rotation_angle_deg = 0;
 view_rotation_axis = [0, 1, 0];

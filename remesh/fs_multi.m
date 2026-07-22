@@ -120,22 +120,22 @@ if start == 0
         %stretch_factor = a_from_v(.95);
 
         %For specific reduced volume
-        % stretch_factor = a_from_v(p.v);
-        % P(:,3) = stretch_factor*P(:,3);
-        % 
-        % %%For shaqfeh fige 8
-        % geo_upright=Geometry(M,P);
-        % phi0 = phi0_from_excess(excess_area(geo_upright));
-        % [P,M] = rotate_vesicle(P,M,.5-phi0,"y");
+        stretch_factor = a_from_v(p.v);
+        P(:,3) = stretch_factor*P(:,3);
+
+        %%For shaqfeh fige 8
+        %geo_upright=Geometry(M,P);
+        %phi0 = phi0_from_excess(excess_area(geo_upright));
+        %phi0 = .3;
+        %[P,M] = rotate_vesicle(P,M,.5-phi0,"y");
 
         % For narsimhan figure 4
         %[M,P] = initial_dumbbell(.35);
 
         % For BGN figure
-
-        biconcave = load("biconcave.mat");
-        P = biconcave.P;M=biconcave.M;
-        [P,M] = rotate_vesicle(P,M,.5,"y");
+        % biconcave = load("biconcave.mat");
+        % P = biconcave.P;M=biconcave.M;
+        % [P,M] = rotate_vesicle(P,M,.5,"y");
         
     end
 
@@ -144,7 +144,7 @@ if start == 0
     if p.initial_remesh && hasRemesher
         disp('Remeshing at start')
         geo_pre = geo;
-        [M, P] = remeshing(int32(M), P, int32([]), 2.1*mean(geo.he_length), int32(100));
+        [M, P] = remeshing(int32(M), P, int32([]), mean(geo.he_length), int32(100));
         M = cast(M, "double");
         geo = Geometry(M, P);
         [P, geo] = newton_correct_volume(geo, geo_pre.area, geo_pre.volume);
@@ -210,7 +210,7 @@ if start == 0
 else
     p_input = p;
     %dt_override = p.dt;
-    k_override = p.k;
+    %k_override = p.k;
     T_override = p.T; 
     remesh_size = p.remesh_size;
     load(sprintf("%sgeo%d.mat", dir, start), "M", "P", "velocity", "lambda", "p", "o", "r");
@@ -223,7 +223,7 @@ else
         end
     end
     %p.dt = dt_override;
-    p.k = k_override;
+    %p.k = k_override;
     p.T = T_override;
     p.remesh_size = remesh_size;
     override_fields = ["Sd", "Da", "Gamma", "gamy", "v", "chi", ...
@@ -336,7 +336,7 @@ else
     % o.tol_b = 1e-8;
     % o.tol_c = 1e-7;
     % o.tol_d = 1e-7;
-        p.bending_hessian_mode = "bih";
+        p.bending_hessian_mode = "exact";
 
     %.h = o.h*3;
     %o.eta = 0;
@@ -660,7 +660,7 @@ for t = (start + 1):p.T
     [P, velocity] = rm_rigid_patched(P, (P(:) - P0) / p.dt, geo.v_area,"translation");
     geo = Geometry(M, P);
 
-    if 1 %hasRemesher && deformation_criterion(geo)
+    if 0 %hasRemesher && deformation_criterion(geo)
         geo_pre = geo;
         if ~supress_outputs
             fprintf("Remeshing. t = %d \n", t);

@@ -7,13 +7,17 @@ figure_color = 'w';
 % Current-work simulation data to extract.
 broussinos_Sd = 1e-6;
 broussinos_Da = 0;
-broussinos_gamy_values = [8e-7,8e-6]; % Scalar or array, e.g. [4e-7, 8e-7, 1.2e-6].
+broussinos_gamy_values = [8e-7,8e-6,8e-5]; % Scalar or array, e.g. [4e-7, 8e-7, 1.2e-6].
 broussinos_v_values = [0.988940, 0.97734, 0.96597, 0.954817, 0.9438, ...
     0.93314, 0.9226, 0.91227, 0.90213, 0.89217, 0.88240, 0.87280];
 broussinos_tf = "last"; % "last" or a numeric frame id, e.g. 200.
 
-x_limits = [0.05, 1.5];
-y_limits = [0.09, 0.25];
+% Axis data options.
+x_axis_mode = "Lam"; % Options: "excess_area" or "Lam".
+tilt_scaled_by_pi = true; % true plots psi/pi; false plots psi in radians.
+
+x_limits = [0.05, 1.5]; % Excess-area limits; auto-converted if x_axis_mode = "Lam".
+y_limits = [0.09, 0.25]; % psi/pi limits; auto-converted if tilt_scaled_by_pi = false.
 axis_line_width = 1.25;
 axis_font_size = 18;
 axis_font_name = 'Helvetica';
@@ -28,13 +32,13 @@ misbah_color = 'k';
 kantsler_edge_color = 'k';
 broussinos_edge_color = 'r';
 broussinos_color_map = "lines";
-broussinos_color_order = []; % Optional nGamy x 3 RGB matrix. Leave [] to use broussinos_color_map.
+broussinos_color_order = [.8 .1 .1;.1 .8 .1; .1 .1 .8]; % Optional nGamy x 3 RGB matrix. Leave [] to use broussinos_color_map.
 
-title_text = "Membrane excess area vs tilt angle, \chi = 8";
+title_text = "Membrane shape vs tilt angle, \chi = 8";
 title_font_size = 30;
 title_font_weight = 'normal';
-x_label_text = "Membrane excess area";
-y_label_text = "Tilt angle \psi/\pi";
+x_label_text = "";
+y_label_text = "";
 label_font_size = 22;
 label_font_weight = 'normal';
 
@@ -79,6 +83,19 @@ misbah_data=[0.08803611738148984, 0.21694214876033058
     broussinos_Sd, broussinos_Da, broussinos_gamy_values, ...
     broussinos_v_values, broussinos_tf);
 
+[shaqfeh_data, x_label_text, y_label_text, x_limits, y_limits] = apply_axis_options( ...
+    shaqfeh_data, x_axis_mode, tilt_scaled_by_pi, x_label_text, y_label_text, ...
+    x_limits, y_limits);
+[kantsler_data, ~, ~, ~, ~] = apply_axis_options( ...
+    kantsler_data, x_axis_mode, tilt_scaled_by_pi, x_label_text, y_label_text, ...
+    x_limits, y_limits);
+[misbah_data, ~, ~, ~, ~] = apply_axis_options( ...
+    misbah_data, x_axis_mode, tilt_scaled_by_pi, x_label_text, y_label_text, ...
+    x_limits, y_limits);
+[broussinos_data, ~, ~, ~, ~] = apply_axis_options( ...
+    broussinos_data, x_axis_mode, tilt_scaled_by_pi, x_label_text, y_label_text, ...
+    x_limits, y_limits);
+
 fig = figure("Color", figure_color, "Position", figure_position);
 ax = axes(fig);
 hold(ax, "on");
@@ -107,6 +124,43 @@ set(ax, LineWidth=axis_line_width, FontSize=axis_font_size, ...
     FontName=axis_font_name, FontWeight=axis_font_weight);
 box on;
 legend(ax, FontSize=legend_font_size, Location=legend_location);
+
+function [data, x_label_text, y_label_text, x_limits, y_limits] = apply_axis_options( ...
+        data, x_axis_mode, tilt_scaled_by_pi, x_label_text, y_label_text, ...
+        x_limits, y_limits)
+    x_axis_mode = lower(string(x_axis_mode));
+    tilt_scaled_by_pi = logical(tilt_scaled_by_pi);
+
+    switch x_axis_mode
+        case {"excess_area", "excess", "ea"}
+            default_x_label = "Membrane excess area";
+        case {"lam", "lambda"}
+            data(:, 1) = Lam_from_ea(data(:, 1));
+            if ~isempty(x_limits)
+                x_limits = sort(Lam_from_ea(x_limits));
+            end
+            default_x_label = "\Lambda";
+        otherwise
+            error('Unknown x_axis_mode "%s". Use "excess_area" or "Lam".', x_axis_mode);
+    end
+
+    if tilt_scaled_by_pi
+        default_y_label = "Tilt angle \psi/\pi";
+    else
+        data(:, 2) = pi * data(:, 2);
+        if ~isempty(y_limits)
+            y_limits = pi * y_limits;
+        end
+        default_y_label = "Tilt angle \psi";
+    end
+
+    if strlength(string(x_label_text)) == 0
+        x_label_text = default_x_label;
+    end
+    if strlength(string(y_label_text)) == 0
+        y_label_text = default_y_label;
+    end
+end
 
 function [broussinos_data, gamy_by_point] = extract_broussinos_data(Sd, Da, gamy_values, v_values, tf)
     script_dir = fileparts(mfilename("fullpath"));

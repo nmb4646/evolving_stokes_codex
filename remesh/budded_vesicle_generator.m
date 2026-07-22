@@ -1,6 +1,6 @@
 close all; clear;
 
-[P,M] = pearledVesicleMesh(.3,20,20);
+[P,M] = pearledVesicleMesh(.3,30,30);
 %[M,P] = initial_dumbbell(.35);
 save("budded_vesicle.mat", "M", "P")
 
