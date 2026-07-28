@@ -20,8 +20,8 @@ function [M, P, info] = initial_dumbbell(v, res)
 %   Large p gives a more cylindrical middle section and gradual end bulges.
 
     if nargin < 2 || isempty(res)
-        nTheta = 60; %50, 50 gave good results before
-        nPhi   = 60;
+        nTheta = 45; %50, 50 gave good results before
+        nPhi   = 45;
     elseif isscalar(res)
         nTheta = max(24, round(res));
         nPhi   = max(48, 2*nTheta);

@@ -4,10 +4,10 @@ close all; clc; clear;
 
 %%% Simulation selection
 % Edit these values to select runs from data/fs_batch_data.
-Da = 0;
-Sd = [3e2];
-gamy = 0;
-v = .97;
+Da = 1e-1;
+Sd = [1e-6];
+gamy = 1.01e-5;
+v = .5;
 
 % First geo timestep to include. Use 0 to include geo0.mat.
 time_start = 0;

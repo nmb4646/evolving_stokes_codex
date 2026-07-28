@@ -4,15 +4,16 @@ close all; clc; clear;
 % Override run_tag/directory/name before running if needed.
 
 
-k = 1000;
+k = 100;
 Gamma = 0;
 
-Sd = 3e2;
-Da = 0;
-gamy = 0;
-v = .97;
+Sd = 1e-6;
+Da = 1e-6;
+gamy = 4*Sd;
+v = .35;
 
-plot_stride = 1;
+plot_stride = 3;
+gif_resolution_scale = 1; % GIF pixel dimensions relative to size_x and size_y.
 
 override_ids = [];
 
@@ -29,13 +30,17 @@ name = directory + run_tag + ".gif";
 fprintf("Plotting %s\n", folder);
 fprintf("Writing %s\n", name);
 
-view_azi = -20;
+view_azi = -1;
 view_ele = 1;
 view_rotation_angle_deg = 0;
 view_rotation_axis = [0, 1, 0];
 view_rotation_center = [0, 0, 0];
 alph = .9;
 edge_color = [.3, .3, .3];
+permeation_color_limits = [-.005, .005]; % Numeric limits shown on the permeation colorbar.
+permeation_color_negative = [0.05, 0.20, 1.00]; % Royal blue at the lower limit.
+permeation_color_neutral = [1.00, 1.00, 1.00]; % Color at zero.
+permeation_color_positive = [1.00, 0.05, 0.05]; % Bright red at the upper limit.
 lighting_options.enabled = false;
 lighting_options.face_lighting = 'gouraud'; % Options: 'none', 'flat', or 'gouraud'.
 lighting_options.ambient_strength = 0.35;
@@ -47,8 +52,9 @@ size_x = 1000;
 size_y = 900;
 
 
+
 if ~exist('show_velocity', 'var')
-    show_velocity = true;
+    show_velocity = false;
 end
 if ~exist('velocity_stride', 'var')
     velocity_stride = 1;
@@ -94,7 +100,7 @@ if ~exist('color_mode', 'var')
 end
 if ~exist('permeation_smoothing_enabled', 'var')
     % Visual-only one-ring neighbor averaging for permeation coloring.
-    permeation_smoothing_enabled = true;
+    permeation_smoothing_enabled = false;
 end
 if ~exist('permeation_smoothing_steps', 'var')
     % Number of repeated averaging passes. Use 0 to disable.
@@ -127,6 +133,7 @@ color_smoothing.permeation.enabled = permeation_smoothing_enabled;
 color_smoothing.permeation.steps = permeation_smoothing_steps;
 color_smoothing.permeation.self_weight = permeation_smoothing_self_weight;
 use_uniform_color = any(color_mode == ["uniform", "surface", "uniform_surface"]);
+use_permeation_color = any(color_mode == ["permeation", "permeation_velocity", "permeation_norm"]);
 hide_mesh_edges = any(color_mode == ["surface", "uniform_surface"]);
 if hide_mesh_edges
     mesh_edge_color = "none";
@@ -189,11 +196,22 @@ end
 
 fig = figure('Color', 'w', 'Position', [200, 200, size_x, size_y], 'InvertHardcopy', 'off');
 ax = axes(fig);
+validateattributes(gif_resolution_scale, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'positive'}, mfilename, 'gif_resolution_scale');
+gif_render_dpi = max(1, round( ...
+    get(groot, 'ScreenPixelsPerInch') * gif_resolution_scale));
 set(ax, 'Units', 'normalized', 'Position', [0.03, 0.03, 0.94, 0.94], ...
     'ActivePositionProperty', 'position', 'Color', [.9, .9, .9]);
-colormap(ax, turbo(256));
-if ~use_uniform_color
-    clim(ax, [color_min, color_max]);
+if use_permeation_color
+    colormap(ax, diverging_colormap(permeation_color_negative, ...
+        permeation_color_neutral, permeation_color_positive, 256));
+    clim(ax, permeation_color_limits);
+    colorbar(ax);
+else
+    colormap(ax, turbo(256));
+    if ~use_uniform_color
+        clim(ax, [color_min, color_max]);
+    end
 end
 hold(ax, 'on');
 
@@ -325,15 +343,13 @@ for frame_idx = 1:numel(plot_ids)
     else
         streamline_handles = gobjects(0);
     end
-    if ~use_uniform_color
-        %colorbar;clim([-.1 .1])
-    end
     drawnow;
 
-    frame = getframe(fig);
-    frame_rgb = frame2im(frame);
+    frame_rgb = print(fig, '-RGBImage', sprintf('-r%d', gif_render_dpi));
     [frame_ind, map] = rgb2ind(frame_rgb, 256);
     if gif_frame_count == 0
+        fprintf("GIF frame resolution: %d x %d pixels\n", ...
+            size(frame_rgb, 2), size(frame_rgb, 1));
         imwrite(frame_ind, map, name, 'gif', ...
             'LoopCount', inf, ...
             'DelayTime', gif_delay, ...
@@ -349,6 +365,16 @@ for frame_idx = 1:numel(plot_ids)
 end
 
 fprintf("Saved %s with %d frames.\n", name, gif_frame_count);
+
+function map = diverging_colormap(negative, neutral, positive, n_colors)
+    colors = [negative(:).'; neutral(:).'; positive(:).'];
+    if any(size(colors) ~= [3, 3]) || any(~isfinite(colors), "all") || ...
+            any(colors < 0, "all") || any(colors > 1, "all")
+        error("Colormap anchor colors must be finite RGB triplets between 0 and 1.");
+    end
+
+    map = interp1([0, 0.5, 1], colors, linspace(0, 1, n_colors), "linear");
+end
 
 function [lo, hi] = percentile_bounds(x, lo_pct, hi_pct)
     x = sort(x(:));
@@ -435,7 +461,7 @@ function C = frame_color_data(geoj, geo, color_mode, ~, color_smoothing)
             else
                 Gamma = 0;
             end
-            C = abs(Gamma + dot(geoj.f, geo.v_normal, 2));
+            C = -(Gamma + dot(geoj.f, geo.v_normal, 2));
             C = maybe_smooth_color_data(C, geo, color_smoothing.permeation);
         otherwise
             error("Unknown color_mode '%s'. Use 'curvature', 'permeation', 'uniform', or 'surface'.", color_mode);

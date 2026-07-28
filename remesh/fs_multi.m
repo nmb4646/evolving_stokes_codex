@@ -111,7 +111,7 @@ if start == 0
         P = loaded.P;
         M = loaded.M;
     else
-        [P, M] = subdivided_sphere(p.subdivisions);
+        %[P, M] = subdivided_sphere(p.subdivisions);
 
         % For Desimone figure
         %load('budded_vesicle.mat')
@@ -120,19 +120,22 @@ if start == 0
         %stretch_factor = a_from_v(.95);
 
         %For specific reduced volume
-        stretch_factor = a_from_v(p.v);
-        P(:,3) = stretch_factor*P(:,3);
+        % [P, M] = subdivided_sphere(double(int32((p.subdivisions)/(1.5*p.v))));
+        % stretch_factor = a_from_v(p.v);
+        % P(:,3) = stretch_factor*P(:,3);
+
+        % [M,P] = initial_capsule(p.v,p.subdivisions);
+        % [P,M] = rotate_vesicle(P,M,.85,"y");
 
         %%For shaqfeh fige 8
-        %geo_upright=Geometry(M,P);
-        %phi0 = phi0_from_excess(excess_area(geo_upright));
-        %phi0 = .3;
-        %[P,M] = rotate_vesicle(P,M,.5-phi0,"y");
+        % geo_upright=Geometry(M,P);
+        % %phi0 = phi0_from_excess(excess_area(geo_upright));
+        % phi0 = .35;
+        % [P,M] = rotate_vesicle(P,M,.5-phi0,"y");
 
         % For narsimhan figure 4
-        %[M,P] = initial_dumbbell(.35);
-
-        % For BGN figure
+        [M,P] = initial_capsule(p.v,p.subdivisions);
+        %For BGN figure
         % biconcave = load("biconcave.mat");
         % P = biconcave.P;M=biconcave.M;
         % [P,M] = rotate_vesicle(P,M,.5,"y");
@@ -430,7 +433,8 @@ for t = (start + 1):p.T
         b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
         P_bie = reshape(P0, [], 3);
         geo_bie = Geometry(M, P_bie);
-        u_background = shear_flow(P_bie,p.gamy);%shear_flow(P_bie, p.gamy);%poiseuille_flow(P_bie,p.gamy,12.5);%shear_flow(P_bie, p.gamy);
+        %u_background = shear_flow(P_bie, p.gamy);
+        u_background = extensional_flow(P_bie,p.gamy);%poiseuille_flow(P_bie,p.gamy,12.5);
         c = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
 
 
@@ -606,7 +610,9 @@ for t = (start + 1):p.T
             [5, 7], 1, .25);
     
             geo = Geometry(M, P);
-            [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
+            if false
+                [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
+            end
             [velocity, f] = map_data(geo, geo_pre, velocity, f);
             slp_cache = stokeslet_SLP_triangle_setup(M);
             disp("Old: " + length(geo_pre.V))
@@ -670,7 +676,7 @@ for t = (start + 1):p.T
         M = cast(M, "double");
         geo = Geometry(M, P);
         
-        if true
+        if false
             %fprintf("Reduced volume before correction: %.9f\n", reduced_volume(geo));
             [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
             %fprintf("Reduced volume after correction: %.9f\n", reduced_volume(geo));
@@ -682,7 +688,7 @@ for t = (start + 1):p.T
 
     geo = Geometry(M, P);
     %P = P * sqrt(p.area0 / geo.area);
-    geo = Geometry(M, P);
+    %geo = Geometry(M, P);
     fb = geo.bending_force(1);
 
     save(dir + sprintf("geo%d.mat", t), "M", "P", "velocity", "lambda", "f", "fb", "p", "o", "r", "lsr");

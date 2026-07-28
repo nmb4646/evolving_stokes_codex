@@ -1,0 +1,139 @@
+%CYLINDER_MODE_ANALYSIS Run cylindrical mode decomposition and growth fitting.
+%
+% Edit the parameter section below, then run this file. Parameter lists are
+% expanded over every combination and mapped to data/fs_batch_data folders.
+
+clearvars;
+close all;
+clc;
+
+%%% Series and modes
+
+Sd_values = 1e-6;
+Da_values = 1e-3;
+gamy_values = 4e-6;
+v_values = 0.35;
+
+m_max = 0;                    % 0 selects the fast axisymmetric path.
+n_min = 1;
+n_max = 16;
+projection_method = "weighted_lstsq"; % "weighted_lstsq" or "quadrature_nudft".
+
+%%% Frame range
+
+first_frame = 0;
+last_frame = inf;
+frame_stride = 1;
+maximum_frames = inf;
+
+%%% Core and coordinate settings
+
+core_method = "persistent";         % "auto", "persistent", or "detect_each_frame".
+axis_mode = "tracked_pca";    % "tracked_pca", "fixed_initial", or "known".
+known_axis = [];              % Example: [1, 0, 0].
+tukey_alpha = 0.00000001;
+
+%%% Growth-rate fitting
+
+growth_fit_mode = "auto";     % "auto" or "fixed".
+fixed_fit_start_time = -inf;
+fixed_fit_end_time = inf;
+minimum_fit_points = 6;
+maximum_fit_points = 40;
+maximum_early_frames = 100;
+minimum_amplitude_ratio = 1.20;
+minimum_signal_to_noise = 3.0;
+maximum_dimensionless_amplitude = 0.05;
+minimum_r_squared = 0.90;
+
+%%% Optional paired-run analysis
+
+pairing_enabled = false;
+pairing_roles = strings(0, 1);     % One per series: "plus", "minus", "reference", or "ordinary".
+pairing_group_ids = strings(0, 1); % Matching IDs identify related simulations.
+pairing_epsilon = [];              % Scalar or one value per series.
+
+%%% Output and diagnostics
+
+save_mode_coefficient_csv = true;
+save_individual_fit_plots = true;
+growth_rate_x_axis = "n";       % "n" or "qR".
+figure_visible = "off";
+figure_position = [100, 100, 1200, 760];
+figure_resolution = 220;
+diagnostic_line_width = 1.7;
+diagnostic_marker_size = 7;
+diagnostic_axes_font_size = 13;
+diagnostic_label_font_size = 15;
+diagnostic_title_font_size = 16;
+
+%%% Build and run the resolved configuration
+
+script_dir = fileparts(mfilename("fullpath"));
+addpath(script_dir);
+cfg = cylinder_mode_defaults();
+
+[Sd_grid, Da_grid, gamy_grid, v_grid] = ndgrid( ...
+    Sd_values, Da_values, gamy_values, v_values);
+series_folders = strings(numel(Sd_grid), 1);
+for simulation_index = 1:numel(Sd_grid)
+    run_tag = sprintf("Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e", ...
+        Sd_grid(simulation_index), Da_grid(simulation_index), ...
+        gamy_grid(simulation_index), v_grid(simulation_index));
+    run_tag = strrep(run_tag, "+", "p");
+    run_tag = strrep(run_tag, "-", "m");
+    series_folders(simulation_index) = run_tag;
+end
+
+cfg.frame.first_index = first_frame;
+cfg.frame.last_index = last_frame;
+cfg.frame.stride = frame_stride;
+cfg.frame.max_frames = maximum_frames;
+
+cfg.modes.m_max = m_max;
+cfg.modes.n_min = n_min;
+cfg.modes.n_max = n_max;
+cfg.modes.projection = projection_method;
+
+cfg.core.method = core_method;
+cfg.alignment.axis_mode = axis_mode;
+cfg.alignment.known_axis = known_axis;
+cfg.window.alpha = tukey_alpha;
+
+cfg.growth.mode = growth_fit_mode;
+cfg.growth.fixed_start_time = fixed_fit_start_time;
+cfg.growth.fixed_end_time = fixed_fit_end_time;
+cfg.growth.minimum_points = minimum_fit_points;
+cfg.growth.maximum_points = maximum_fit_points;
+cfg.growth.maximum_early_frames = maximum_early_frames;
+cfg.growth.minimum_amplitude_ratio = minimum_amplitude_ratio;
+cfg.growth.minimum_signal_to_noise = minimum_signal_to_noise;
+cfg.growth.maximum_dimensionless_amplitude = maximum_dimensionless_amplitude;
+cfg.growth.minimum_r_squared = minimum_r_squared;
+
+cfg.pairing.enabled = pairing_enabled;
+cfg.pairing.roles = pairing_roles;
+cfg.pairing.group_ids = pairing_group_ids;
+cfg.pairing.epsilon = pairing_epsilon;
+
+cfg.output.save_mode_csv = save_mode_coefficient_csv;
+cfg.diagnostics.save_individual_fit_plots = save_individual_fit_plots;
+cfg.diagnostics.growth_x_axis = growth_rate_x_axis;
+cfg.diagnostics.figure_visible = figure_visible;
+cfg.diagnostics.figure_position = figure_position;
+cfg.diagnostics.resolution = figure_resolution;
+cfg.diagnostics.line_width = diagnostic_line_width;
+cfg.diagnostics.marker_size = diagnostic_marker_size;
+cfg.diagnostics.axes_font_size = diagnostic_axes_font_size;
+cfg.diagnostics.label_font_size = diagnostic_label_font_size;
+cfg.diagnostics.title_font_size = diagnostic_title_font_size;
+
+cfg.core.minimum_radius_fraction = 0.80;
+cfg.core.transition_margin_in_radii = 3.0;
+cfg.core.fallback_half_length_fraction = 0.20;
+cfg.core.profile_smoothing_bins = 3;
+cfg.core.method = core_method;
+
+
+cylinder_results = cylinder_mode_pipeline(series_folders, cfg);
+disp(cylinder_results.summary);

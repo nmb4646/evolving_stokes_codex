@@ -1,43 +1,173 @@
-function [summary, scaling, analyses] = membrane_energy_timescale(mode, config_overrides)
-%MEMBRANE_ENERGY_TIMESCALE Extract early-time energy relaxation timescales.
+%MEMBRANE_ENERGY_TIMESCALE Plot early membrane-energy relaxation timescales.
 %
-%   membrane_energy_timescale
-%       Processes the fs_batch runs selected in default_config(), writes a
-%       summary CSV and Markdown report, and saves diagnostic figures.
-%
-%   membrane_energy_timescale("test")
-%       Runs the built-in synthetic tests without reading simulation data.
-%
-%   membrane_energy_timescale("analyze", overrides)
-%       Applies fields from the scalar struct overrides after default_config().
-%
-% The fitted model is
-%
-%   E(t) = E_inf + A * exp(-(t - t0) / tau_energy).
-%
-% Fits always use the original energy values. Smoothing is used only for
-% oscillation detection and local-rate diagnostics.
+% Run this file as a normal MATLAB script. It loads the selected fs_batch
+% simulations, extracts tau_E from each early energy trace, plots tau_E
+% against Sd, and saves both the figure and a CSV summary.
 
-if nargin < 1
-    mode = "analyze";
-end
-if nargin < 2
-    config_overrides = struct();
-end
+clearvars;
+close all;
+clc;
 
-cfg = default_config();
-cfg = apply_config_overrides(cfg, config_overrides);
-mode = lower(string(mode));
+%%% Plot appearance -- edit this section to change the figure
 
-if mode == "test"
-    run_synthetic_tests(cfg);
-    summary = table();
-    scaling = empty_scaling_result();
-    analyses = {};
-    return
-elseif mode ~= "analyze"
-    error("Unknown mode '%s'. Use 'analyze' or 'test'.", mode);
-end
+% Figure dimensions, visibility, and exported image.
+visual.figure_position = [100, 100, 1250, 780]; % [left bottom width height], pixels.
+visual.figure_color = [1.00, 1.00, 1.00];       % Color outside the axes.
+visual.figure_visible = "on";                   % "on" displays the figure while running.
+visual.save_figure = true;                       % Save the completed figure to disk.
+visual.output_filename = "membrane_energy_timescale.png";
+visual.output_resolution = 300;                  % Export resolution in dots per inch.
+
+% Axes and tick appearance.
+visual.axes_color = [1.00, 1.00, 1.00];
+visual.axes_text_color = [0.10, 0.10, 0.10];
+visual.axes_font_name = "Helvetica";
+visual.axes_font_size = 20;
+visual.axes_line_width = 1.6;
+visual.tick_direction = "in";                   % "in", "out", or "both".
+visual.tick_length = [0.012, 0.012];
+visual.show_box = true;
+visual.x_scale = "log";
+visual.y_scale = "log";
+visual.x_limits = [];                            % Empty selects limits automatically.
+visual.y_limits = [];                            % Example: [1e-3, 1e2].
+
+% Axis labels.
+visual.x_label = "Sd";
+visual.y_label = "\tau_E";
+visual.label_font_size = 20;
+visual.label_font_weight = "normal";
+visual.label_color = [0.08, 0.08, 0.08];
+
+% Plot title. Leave title_text empty to construct it from Da, gamy, and v.
+visual.show_title = true;
+visual.title_text = "";
+visual.title_font_size = 24;
+visual.title_font_weight = "bold";
+visual.title_color = [0.05, 0.05, 0.05];
+
+% Good and acceptable simulation points.
+visual.data_marker = "o";
+visual.data_marker_size = 13;
+visual.data_marker_face_color = [0.08, 0.38, 0.78];
+visual.data_marker_edge_color = [0.02, 0.02, 0.02];
+visual.data_marker_line_width = 1.4;
+
+% Poor-quality simulation points.
+visual.poor_marker = "x";
+visual.poor_marker_size = 9;
+visual.poor_marker_color = [0.82, 0.18, 0.14];
+visual.poor_marker_line_width = 1.6;
+
+% Fitted crossover curve tau_E = a + b/Sd.
+visual.fit_line_color = [0.02, 0.02, 0.02];
+visual.fit_line_style = "-";
+visual.fit_line_width = 2.2;
+
+% Reference line with log-log slope -1.
+visual.reference_line_color = [0.18, 0.18, 0.18];
+visual.reference_line_style = ":";
+visual.reference_line_width = 1.6;
+
+% Grid appearance.
+visual.show_major_grid = true;
+visual.show_minor_grid = true;
+visual.grid_color = [0.72, 0.72, 0.72];
+visual.grid_alpha = 0.28;
+visual.minor_grid_color = [0.82, 0.82, 0.82];
+visual.minor_grid_alpha = 0.20;
+
+% Legend appearance.
+visual.show_legend = true;
+visual.legend_location = "northeast";
+visual.legend_orientation = "vertical";         % "vertical" or "horizontal".
+visual.legend_num_columns = 1;
+visual.legend_font_name = "Helvetica";
+visual.legend_font_size = 18;
+visual.legend_font_weight = "normal";           % "normal" or "bold".
+visual.legend_interpreter = "tex";              % "tex", "latex", or "none".
+visual.legend_text_color = [0.08, 0.08, 0.08];
+visual.legend_background_color = [1.00, 1.00, 1.00];
+visual.legend_edge_color = [0.35, 0.35, 0.35];
+visual.legend_box = true;
+visual.legend_item_token_size = [30, 18];        % [symbol width height], pixels.
+visual.legend_simulation_label = "Simulations";
+visual.legend_poor_label = "Poor quality";
+visual.legend_fit_label = "Predicted scaling";
+visual.legend_reference_label = "Slope = -1";
+
+%%% Simulations to process
+
+Sd_values = [3e-3, 1e-2, 3e-2, 1e-1, 3e-1, 1, 3, 1e1, 3e1, 1e2, 3e2];
+% Sd_values = [1e-2, 1, 3, 1e1, 3e1, 1e2, 3e2];
+Da = 0;
+gamy = 0;
+v = 0.97;
+energy_Kb = 1;
+
+% Empty paths use the standard locations under remesh/data.
+data_dir_override = "";
+output_dir_override = "";
+
+%%% Analysis settings -- normally leave these unchanged
+
+cfg.Sd_values = Sd_values;
+cfg.Da = Da;
+cfg.gamy = gamy;
+cfg.v = v;
+cfg.energy_Kb = energy_Kb;
+cfg.data_dir = data_dir_override;
+cfg.output_dir = output_dir_override;
+cfg.allow_legacy_folder_without_v = true;
+
+cfg.expected_n_samples = 300;
+cfg.allow_one_extra_initial_sample = true;
+cfg.require_expected_n_samples = false;
+cfg.start_index_min = 0;
+cfg.start_index_max = 5;
+cfg.min_usable_points = 8;
+cfg.min_fit_points = 8;
+cfg.max_early_index = 200;
+cfg.candidate_end_min = 10;
+cfg.candidate_end_max = 35;
+cfg.candidate_end_step = 1;
+
+cfg.smooth_window = 5;
+cfg.smooth_polyorder = 2;
+cfg.persistent_rise_points = 3;
+cfg.derivative_noise_multiplier = 3.0;
+cfg.sign_change_window = 7;
+cfg.sign_changes_required = 2;
+cfg.slow_decay_fraction = 0.20;
+cfg.startup_jump_multiplier = 8.0;
+
+cfg.robust_loss = "soft_l1";
+cfg.f_scale = 1.0;
+cfg.energy_bound_margin_fraction = 0.50;
+cfg.tau_lower_step_fraction = 0.05;
+cfg.tau_upper_interval_factor = 100;
+cfg.min_r_squared = 0.98;
+cfg.max_relative_tau_se = 0.50;
+cfg.max_normalized_rmse = 0.10;
+cfg.boundary_tolerance = 2e-3;
+cfg.max_tau_interval_ratio = 10;
+cfg.min_tau_step_ratio = 0.10;
+cfg.optimizer_max_iterations = 2000;
+cfg.optimizer_max_evaluations = 8000;
+
+cfg.plateau_relative_tolerance = 0.15;
+cfg.min_plateau_windows = 4;
+cfg.crosscheck_good_tolerance = 0.30;
+cfg.local_rate_drift_tolerance = 0.50;
+cfg.double_exponential_aic_improvement = 6.0;
+cfg.double_exponential_min_amplitude_fraction = 0.05;
+cfg.double_exponential_min_tau_ratio = 1.8;
+
+cfg.bulk_time_factor = 1.0;
+cfg.include_acceptable_in_scaling = true;
+cfg.minimum_scaling_points = 3;
+
+%%% Load the simulations and extract timescales
 
 script_dir = fileparts(mfilename("fullpath"));
 remesh_dir = find_remesh_dir(script_dir);
@@ -54,12 +184,8 @@ if strlength(cfg.output_dir) == 0
 else
     output_dir = char(cfg.output_dir);
 end
-diagnostic_dir = fullfile(output_dir, "trace_diagnostics");
 if ~isfolder(output_dir)
     mkdir(output_dir);
-end
-if cfg.save_trace_diagnostics && ~isfolder(diagnostic_dir)
-    mkdir(diagnostic_dir);
 end
 
 Sd_values = cfg.Sd_values(:).';
@@ -90,9 +216,6 @@ for i = 1:numel(Sd_values)
     if a.status == "ok"
         fprintf("  tau_E = %.6g, quality = %s, fit samples %d:%d\n", ...
             a.tau_energy, a.quality_flag, a.fit_start_index, a.fit_end_index);
-        if cfg.save_trace_diagnostics
-            make_trace_diagnostic(a, diagnostic_dir, cfg);
-        end
     else
         fprintf("  failed: %s\n", a.notes);
     end
@@ -106,123 +229,10 @@ summary_file = fullfile(output_dir, "membrane_energy_timescale_summary.csv");
 writetable(summary, summary_file);
 fprintf("Saved %s\n", summary_file);
 
-if cfg.save_batch_plots
-    make_batch_plots(analyses, summary, scaling, output_dir, cfg);
-end
-
-sensitivity = table();
-if cfg.run_sensitivity_analysis
-    sensitivity = run_sensitivity_analysis(analyses, summary, cfg);
-    sensitivity_file = fullfile(output_dir, "membrane_energy_timescale_sensitivity.csv");
-    writetable(sensitivity, sensitivity_file);
-    fprintf("Saved %s\n", sensitivity_file);
-end
-
-write_report(summary, scaling, sensitivity, output_dir, cfg);
+make_timescale_plot(summary, scaling, output_dir, cfg, visual);
 disp(summary(:, ["Sd", "status", "quality_flag", "tau_energy", ...
     "tau_energy_total_se", "tau_bulk_scaled", "fit_start_index", ...
     "fit_end_index", "oscillation_start_index"]));
-end
-
-function cfg = apply_config_overrides(cfg, overrides)
-    if isempty(overrides)
-        return
-    end
-    if ~isstruct(overrides) || ~isscalar(overrides)
-        error("config_overrides must be a scalar struct.");
-    end
-    names = fieldnames(overrides);
-    for i = 1:numel(names)
-        name = names{i};
-        if ~isfield(cfg, name)
-            error("Unknown configuration field '%s'.", name);
-        end
-        cfg.(name) = overrides.(name);
-    end
-end
-
-function cfg = default_config()
-    %%% Simulation selection
-    cfg.Sd_values = [3e-3,1e-2, 3e-2, 1e-1, 3e-1, 1, 3, 1e1, 3e1, 1e2];
-    %cfg.Sd_values = [1, 3, 1e1, 3e1, 1e2];
-    cfg.Da = 0;
-    cfg.gamy = 0;
-    cfg.v = 0.97;
-    cfg.energy_Kb = 1;
-    cfg.data_dir = "";   % Empty finds remesh/data/fs_batch_data automatically.
-    cfg.output_dir = ""; % Empty writes remesh/data/membrane_energy_timescale.
-    cfg.allow_legacy_folder_without_v = true;
-
-    %%% Input validation and early-time search
-    cfg.expected_n_samples = 300;
-    cfg.allow_one_extra_initial_sample = true; % Allows geo0 through geo300.
-    cfg.require_expected_n_samples = false;
-    cfg.start_index_min = 0;
-    cfg.start_index_max = 5;
-    cfg.min_usable_points = 12;
-    cfg.min_fit_points = 8;
-    cfg.max_early_index = 200;
-    cfg.candidate_end_min = 10;
-    cfg.candidate_end_max = 35;
-    cfg.candidate_end_step = 1;
-
-    %%% Detection settings
-    cfg.smooth_window = 5;
-    cfg.smooth_polyorder = 2;
-    cfg.persistent_rise_points = 3;
-    cfg.derivative_noise_multiplier = 3.0;
-    cfg.sign_change_window = 7;
-    cfg.sign_changes_required = 2;
-    cfg.slow_decay_fraction = 0.20;
-    cfg.startup_jump_multiplier = 8.0;
-
-    %%% Nonlinear fit and candidate rejection
-    cfg.robust_loss = "soft_l1"; % "soft_l1" or "linear".
-    cfg.f_scale = 1.0;
-    cfg.energy_bound_margin_fraction = 0.50;
-    cfg.tau_lower_step_fraction = 0.05;
-    cfg.tau_upper_interval_factor = 100;
-    cfg.min_r_squared = 0.98;
-    cfg.max_relative_tau_se = 0.50;
-    cfg.max_normalized_rmse = 0.10;
-    cfg.boundary_tolerance = 2e-3;
-    cfg.max_tau_interval_ratio = 10;
-    cfg.min_tau_step_ratio = 0.10;
-    cfg.optimizer_max_iterations = 2000;
-    cfg.optimizer_max_evaluations = 8000;
-
-    %%% Endpoint plateau and quality settings
-    cfg.plateau_relative_tolerance = 0.15;
-    cfg.min_plateau_windows = 4;
-    cfg.crosscheck_good_tolerance = 0.30;
-    cfg.local_rate_drift_tolerance = 0.50;
-    cfg.double_exponential_aic_improvement = 6.0;
-    cfg.double_exponential_min_amplitude_fraction = 0.05;
-    cfg.double_exponential_min_tau_ratio = 1.8;
-
-    %%% Scaling analysis
-    cfg.bulk_time_factor = 1.0;
-    cfg.include_acceptable_in_scaling = true;
-    cfg.minimum_scaling_points = 3;
-
-    %%% Outputs and visual settings
-    cfg.save_trace_diagnostics = true;
-    cfg.save_batch_plots = true;
-    cfg.batch_timescale_only = false; % True saves only the tau_E-versus-Sd scaling plot.
-    cfg.figure_visible = "off"; % Use "on" to display figures while processing.
-    cfg.figure_position = [100, 100, 1250, 780];
-    cfg.line_width = 1.7;
-    cfg.marker_size = 38;
-    cfg.axes_font_size = 11;
-    cfg.output_resolution = 220;
-
-    %%% Optional robustness checks
-    % This reuses the already-loaded energy traces but performs many extra fits.
-    cfg.run_sensitivity_analysis = false;
-    cfg.sensitivity_end_max = [30, 35, 40];
-    cfg.sensitivity_smooth_windows = [3, 5, 7];
-    cfg.sensitivity_losses = ["soft_l1", "linear"];
-end
 
 function trace = load_energy_trace(folder, cfg)
     files = dir(fullfile(folder, "geo*.mat"));
@@ -1286,154 +1296,145 @@ function make_trace_diagnostic(a, output_dir, cfg)
     set(findall(fig, "Type", "axes"), "FontSize", cfg.axes_font_size);
     filename = fullfile(output_dir, sanitize_filename(a.simulation_id) + "_diagnostic.png");
     exportgraphics(fig, filename, "Resolution", cfg.output_resolution);
+    
     close(fig);
 end
 
-function make_batch_plots(analyses, summary, scaling, output_dir, cfg)
+function make_timescale_plot(summary, scaling, output_dir, cfg, visual)
     ok = summary.status == "ok" & summary.Sd > 0 & summary.tau_energy > 0;
     accepted = ok & (summary.quality_flag == "good" | summary.quality_flag == "acceptable");
     poor = ok & summary.quality_flag == "poor";
 
-    if cfg.batch_timescale_only
-        fig = figure("Visible", cfg.figure_visible, "Color", "w", ...
-            "Position", cfg.figure_position);
-        ax_tau = axes(fig);
-        hold(ax_tau, "on");
-        draw_energy_timescale_plot(ax_tau, summary, scaling, accepted, poor, cfg);
-        title(ax_tau, sprintf("Energy relaxation timescale: Da = %.3g, gamy = %.3g, v = %.3g", ...
-            cfg.Da, cfg.gamy, cfg.v));
-        set(ax_tau, "FontSize", cfg.axes_font_size, "Box", "on");
-        grid(ax_tau, "on");
-        filename = fullfile(output_dir, "membrane_energy_timescale_batch.png");
-        exportgraphics(fig, filename, "Resolution", cfg.output_resolution);
-        close(fig);
-        fprintf("Saved %s\n", filename);
-        return
+    fig = figure("Visible", visual.figure_visible, ...
+        "Color", visual.figure_color, "Position", visual.figure_position);
+    ax = axes(fig, "Color", visual.axes_color);
+    hold(ax, "on");
+
+    x = summary.Sd(accepted);
+    y = summary.tau_energy(accepted);
+    if ~isempty(x)
+        plot(ax, x, y, ...
+            "LineStyle", "none", "Marker", visual.data_marker, ...
+            "MarkerSize", visual.data_marker_size, ...
+            "MarkerFaceColor", visual.data_marker_face_color, ...
+            "MarkerEdgeColor", visual.data_marker_edge_color, ...
+            "LineWidth", visual.data_marker_line_width, ...
+            "DisplayName", visual.legend_simulation_label);
     end
-
-    colors = turbo(max(numel(analyses), 1));
-    fig = figure("Visible", cfg.figure_visible, "Color", "w", ...
-        "Position", cfg.figure_position);
-    layout = tiledlayout(fig, 2, 3, "TileSpacing", "compact", "Padding", "compact");
-
-    ax_surface = nexttile(layout, 1); hold(ax_surface, "on");
-    ax_bulk = nexttile(layout, 2); hold(ax_bulk, "on");
-    for i = 1:numel(analyses)
-        a = analyses{i};
-        if a.status ~= "ok"
-            continue
-        end
-        denominator = a.E(a.fit_start_index + 1) - a.E_inf;
-        if denominator <= 0
-            continue
-        end
-        last = min(numel(a.t), cfg.max_early_index + 1);
-        idx = (a.fit_start_index + 1):last;
-        normalized = (a.E(idx) - a.E_inf) / denominator;
-        plot(ax_surface, a.t(idx) - a.t(idx(1)), normalized, ...
-            "Color", colors(i, :), "LineWidth", cfg.line_width, ...
-            "DisplayName", sprintf("Sd = %.3g", a.Sd));
-        bulk_time = cfg.bulk_time_factor * a.Sd * (a.t(idx) - a.t(idx(1)));
-        plot(ax_bulk, bulk_time, normalized, "Color", colors(i, :), ...
-            "LineWidth", cfg.line_width, "DisplayName", sprintf("Sd = %.3g", a.Sd));
-    end
-    xlabel(ax_surface, "Surface-scaled time"); ylabel(ax_surface, "Normalized excess energy");
-    title(ax_surface, "Surface-time collapse");
-    legend(ax_surface, "Location", "best", "FontSize", 8);
-    xlabel(ax_bulk, "Bulk time factor \times Sd \times t"); ylabel(ax_bulk, "Normalized excess energy");
-    title(ax_bulk, "Bulk-time collapse");
-    legend(ax_bulk, "Location", "best", "FontSize", 8);
-
-    ax_tau = nexttile(layout, 3); hold(ax_tau, "on");
-    draw_energy_timescale_plot(ax_tau, summary, scaling, accepted, poor, cfg);
-    title(ax_tau, "Energy timescale");
-
-    ax_bulk_tau = nexttile(layout, 4); hold(ax_bulk_tau, "on");
-    loglog(ax_bulk_tau, summary.Sd(accepted), summary.tau_bulk_scaled(accepted), "o", ...
-        "MarkerFaceColor", [0.1, 0.35, 0.8], "MarkerEdgeColor", "k", ...
-        "MarkerSize", 6);
     if any(poor)
-        loglog(ax_bulk_tau, summary.Sd(poor), summary.tau_bulk_scaled(poor), "x", ...
-            "Color", [0.7, 0.2, 0.2], "MarkerSize", 7);
+        plot(ax, summary.Sd(poor), summary.tau_energy(poor), ...
+            "LineStyle", "none", "Marker", visual.poor_marker, ...
+            "Color", visual.poor_marker_color, ...
+            "MarkerSize", visual.poor_marker_size, ...
+            "LineWidth", visual.poor_marker_line_width, ...
+            "DisplayName", visual.legend_poor_label);
     end
-    set(ax_bulk_tau, "XScale", "log", "YScale", "log");
-    xlabel(ax_bulk_tau, "Sd"); ylabel(ax_bulk_tau, "Bulk time factor \times Sd \times \tau_E");
-    title(ax_bulk_tau, "Bulk-scaled timescale");
 
-    ax_rate = nexttile(layout, 5); hold(ax_rate, "on");
-    loglog(ax_rate, summary.Sd(accepted), summary.decay_rate_surface(accepted), "o", ...
-        "MarkerFaceColor", [0.1, 0.35, 0.8], "MarkerEdgeColor", "k", ...
-        "MarkerSize", 6);
-    if scaling.success
-        xfit = logspace(log10(min(summary.Sd(accepted))), log10(max(summary.Sd(accepted))), 300);
-        loglog(ax_rate, xfit, 1 ./ (scaling.a + scaling.b ./ xfit), "k-", ...
-            "LineWidth", cfg.line_width);
-    end
-    set(ax_rate, "XScale", "log", "YScale", "log");
-    xlabel(ax_rate, "Sd"); ylabel(ax_rate, "1/\tau_E"); title(ax_rate, "Decay rate");
-
-    ax_residual = nexttile(layout, 6); hold(ax_residual, "on");
-    if scaling.success
-        semilogx(ax_residual, scaling.Sd, scaling.residuals, "ko", "MarkerFaceColor", [0.1, 0.35, 0.8]);
-        yline(ax_residual, 0, "k:");
-    end
-    set(ax_residual, "XScale", "log");
-    xlabel(ax_residual, "Sd"); ylabel(ax_residual, "\tau_E - (a+b/Sd)");
-    title(ax_residual, "Crossover residuals");
-
-    title(layout, sprintf("Early membrane-energy relaxation: Da = %.3g, gamy = %.3g, v = %.3g", ...
-        cfg.Da, cfg.gamy, cfg.v));
-    axes_list = findall(fig, "Type", "axes");
-    set(axes_list, "FontSize", cfg.axes_font_size, "Box", "on");
-    grid(axes_list, "on");
-    filename = fullfile(output_dir, "membrane_energy_timescale_batch.png");
-    exportgraphics(fig, filename, "Resolution", cfg.output_resolution);
-    close(fig);
-    fprintf("Saved %s\n", filename);
-end
-
-function draw_energy_timescale_plot(ax, summary, scaling, accepted, poor, cfg)
-    plot_timescale_points(ax, summary, accepted, poor, "tau_energy", cfg);
     if scaling.success
         xfit = logspace(log10(min(summary.Sd(accepted))), ...
             log10(max(summary.Sd(accepted))), 300);
-        loglog(ax, xfit, scaling.a + scaling.b ./ xfit, "k-", ...
-            "LineWidth", cfg.line_width, "DisplayName", "a + b/Sd");
+        plot(ax, xfit, scaling.a + scaling.b ./ xfit, ...
+            "Color", visual.fit_line_color, ...
+            "LineStyle", visual.fit_line_style, ...
+            "LineWidth", visual.fit_line_width, ...
+            "DisplayName", visual.legend_fit_label);
         low_anchor = scaling.a + scaling.b / xfit(1);
         reference = low_anchor * (xfit / xfit(1)) .^ (-1);
-        loglog(ax, xfit, reference, "k:", "LineWidth", 1.2, ...
-            "DisplayName", "slope -1");
+        plot(ax, xfit, reference, ...
+            "Color", visual.reference_line_color, ...
+            "LineStyle", visual.reference_line_style, ...
+            "LineWidth", visual.reference_line_width, ...
+            "DisplayName", visual.legend_reference_label);
     end
-    xlabel(ax, "Sd");
-    ylabel(ax, "\tau_E");
-    legend(ax, "Location", "best");
-end
 
-function plot_timescale_points(ax, summary, accepted, poor, field, ~)
-    x = summary.Sd(accepted);
-    y = summary.(field)(accepted);
-    error_value = summary.tau_energy_total_se(accepted);
-    finite_error = isfinite(error_value) & error_value >= 0;
-    if any(finite_error)
-        errorbar(ax, x(finite_error), y(finite_error), error_value(finite_error), ...
-            "o", "LineStyle", "none", "Color", [0.1, 0.35, 0.8], ...
-            "MarkerFaceColor", [0.1, 0.35, 0.8], "MarkerEdgeColor", "k", ...
-            "LineWidth", 1, "DisplayName", "good/acceptable");
+    set(ax, ...
+        "XScale", visual.x_scale, ...
+        "YScale", visual.y_scale, ...
+        "FontName", visual.axes_font_name, ...
+        "FontSize", visual.axes_font_size, ...
+        "LineWidth", visual.axes_line_width, ...
+        "XColor", visual.axes_text_color, ...
+        "YColor", visual.axes_text_color, ...
+        "TickDir", visual.tick_direction, ...
+        "TickLength", visual.tick_length, ...
+        "GridColor", visual.grid_color, ...
+        "GridAlpha", visual.grid_alpha, ...
+        "MinorGridColor", visual.minor_grid_color, ...
+        "MinorGridAlpha", visual.minor_grid_alpha);
+
+    if visual.show_box
+        box(ax, "on");
+    else
+        box(ax, "off");
     end
-    if any(~finite_error)
-        loglog(ax, x(~finite_error), y(~finite_error), "o", ...
-            "MarkerFaceColor", [0.1, 0.35, 0.8], "MarkerEdgeColor", "k", ...
-            "DisplayName", "good/acceptable");
+    if visual.show_major_grid
+        grid(ax, "on");
+    else
+        grid(ax, "off");
     end
-    if any(poor)
-        loglog(ax, summary.Sd(poor), summary.(field)(poor), "x", ...
-            "Color", [0.75, 0.2, 0.2], "MarkerSize", 7, ...
-            "LineWidth", 1.2, "DisplayName", "poor");
+    if visual.show_minor_grid
+        grid(ax, "minor");
     end
-    set(ax, "XScale", "log", "YScale", "log");
+    if ~isempty(visual.x_limits)
+        xlim(ax, visual.x_limits);
+    end
+    if ~isempty(visual.y_limits)
+        ylim(ax, visual.y_limits);
+    end
+
+    xlabel(ax, visual.x_label, ...
+        "FontSize", visual.label_font_size, ...
+        "FontWeight", visual.label_font_weight, ...
+        "Color", visual.label_color);
+    ylabel(ax, visual.y_label, ...
+        "FontSize", visual.label_font_size, ...
+        "FontWeight", visual.label_font_weight, ...
+        "Color", visual.label_color);
+
+    if visual.show_title
+        title_text = visual.title_text;
+        if strlength(title_text) == 0
+            title_text = sprintf("Energy relaxation timescale: Da = %.3g, gamy = %.3g, v = %.3g", ...
+                cfg.Da, cfg.gamy, cfg.v);
+        end
+        title(ax, title_text, ...
+            "FontSize", visual.title_font_size, ...
+            "FontWeight", visual.title_font_weight, ...
+            "Color", visual.title_color);
+    end
+
+    if visual.show_legend
+        leg = legend(ax, "Location", visual.legend_location, ...
+            "Orientation", visual.legend_orientation, ...
+            "NumColumns", visual.legend_num_columns, ...
+            "FontName", visual.legend_font_name, ...
+            "FontSize", visual.legend_font_size, ...
+            "FontWeight", visual.legend_font_weight, ...
+            "Interpreter", visual.legend_interpreter, ...
+            "TextColor", visual.legend_text_color, ...
+            "Color", visual.legend_background_color, ...
+            "EdgeColor", visual.legend_edge_color);
+        leg.ItemTokenSize = visual.legend_item_token_size;
+        if visual.legend_box
+            leg.Box = "on";
+        else
+            leg.Box = "off";
+        end
+    end
+
     if isempty(x)
         text(ax, 0.5, 0.5, "No accepted traces", "Units", "normalized", ...
             "HorizontalAlignment", "center");
+    end
+    
+    xlim([2e-3,4e2])
+    ylim([2e-2,1e2])
+    
+
+    if visual.save_figure
+        filename = fullfile(output_dir, visual.output_filename);
+        exportgraphics(fig, filename, "Resolution", visual.output_resolution);
+        fprintf("Saved %s\n", filename);
     end
 end
 
@@ -1528,9 +1529,9 @@ function write_report(summary, scaling, sensitivity, output_dir, cfg)
     if scaling.success
         fprintf(file_id, "The crossover interpolation `tau_E = a + b/Sd` used %d traces ", scaling.n_used);
         fprintf(file_id, "with %s weighting.\n\n", scaling.weighting);
-        fprintf(file_id, "- `a = %.8g` (95%% CI %.8g to %.8g)\n", ...
+        fprintf(file_id, "- `a = %.8g` (95%%% CI %.8g to %.8g)\n", ...
             scaling.a, scaling.a_ci(1), scaling.a_ci(2));
-        fprintf(file_id, "- `b = %.8g` (95%% CI %.8g to %.8g)\n", ...
+        fprintf(file_id, "- `b = %.8g` (95%%% CI %.8g to %.8g)\n", ...
             scaling.b, scaling.b_ci(1), scaling.b_ci(2));
         fprintf(file_id, "- linear-space R-squared: %.6g\n", scaling.r_squared);
         fprintf(file_id, "- weighted RMSE: %.6g\n", scaling.weighted_rmse);

@@ -1,0 +1,348 @@
+%CYLINDER_PERMEABILITY_COMPARE Compare axisymmetric growth rates across Da.
+%
+% Edit the parameters below, then run this script. For each requested Da, it
+% analyzes modes m = 0, n = 1:8 and plots growth rate against axial mode n.
+
+clearvars;
+close all;
+clc;
+
+%%% Simulation parameters
+
+Sd = 1e-6;
+Da_values = [1e-6,1e-5, 1e-4,1e-3,1e-2];
+gamy = 4e-6;
+v = 0.35;
+
+%%% Frame range
+
+first_frame = 50;
+last_frame = inf;
+frame_stride = 1;
+maximum_frames = inf;
+
+%%% Cylindrical decomposition
+
+projection_method = "weighted_lstsq"; % "weighted_lstsq" or "quadrature_nudft".
+core_method = "auto";                 % "auto", "persistent", or "detect_each_frame".
+axis_mode = "tracked_pca";            % "tracked_pca", "fixed_initial", or "known".
+known_axis = [];                      % Example: [1, 0, 0].
+tukey_alpha = 0.25;
+
+%%% Growth-rate fitting
+
+growth_fit_mode = "auto";     % "auto" or "fixed".
+fixed_fit_start_time = -inf;
+fixed_fit_end_time = inf;
+minimum_fit_points = 12;
+maximum_fit_points =13;
+maximum_early_frames = 100;
+minimum_amplitude_ratio = 1.20;
+minimum_signal_to_noise = 3.0;
+maximum_dimensionless_amplitude = .05;
+minimum_r_squared = 0.9;
+include_poor_fits = true;     % Include the pipeline's best fit when no fit passes every check.
+
+%%% Plot appearance
+
+figure_visible = "on";
+figure_position = [100, 100, 1000, 700];
+figure_resolution = 250;
+figure_background_color = [1, 1, 1];
+
+y_axis_scale = "linear";      % Use "linear" to retain negative decay rates.
+x_axis_label = "Axial mode, n";
+y_axis_label = "Growth rate, \sigma";
+plot_title = "Axisymmetric cylindrical-mode growth rates";
+axes_font_size = 14;
+label_font_size = 17;
+title_font_size = 17;
+axes_line_width = 1.1;
+grid_alpha = 0.18;
+
+data_line_width = 1.8;
+marker_symbol = "o";
+marker_size = 7;
+Da_color_order = [];          % Empty uses MATLAB's lines map; otherwise N-by-3 RGB.
+show_zero_line = true;
+
+show_legend = true;
+legend_location = "southeast";
+legend_font_size = 17;
+legend_box = "on";
+
+%%% Saved outputs
+
+save_figure = true;
+save_matlab_figure = true;
+save_combined_mat = true;
+save_per_series_growth_csv = true;
+save_per_series_diagnostics = false;
+save_individual_fit_plots = false;
+
+%%% Resolve requested simulation folders
+
+script_dir = fileparts(mfilename("fullpath"));
+addpath(script_dir);
+cfg = cylinder_mode_defaults();
+
+validateattributes(Sd, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'positive'}, mfilename, "Sd");
+validateattributes(Da_values, {'numeric'}, ...
+    {'vector', 'real', 'finite', 'nonnegative', 'nonempty'}, ...
+    mfilename, "Da_values");
+validateattributes(gamy, {'numeric'}, ...
+    {'scalar', 'real', 'finite'}, mfilename, "gamy");
+validateattributes(v, {'numeric'}, ...
+    {'scalar', 'real', 'finite'}, mfilename, "v");
+
+Da_requested = unique(double(Da_values(:)), "stable");
+series_folders = strings(numel(Da_requested), 1);
+for simulation_index = 1:numel(Da_requested)
+    series_folders(simulation_index) = cylinder_parameter_tag( ...
+        Sd, Da_requested(simulation_index), gamy, v);
+end
+
+folder_exists = false(size(series_folders));
+for simulation_index = 1:numel(series_folders)
+    folder_exists(simulation_index) = isfolder( ...
+        fullfile(cfg.data_root, series_folders(simulation_index)));
+    if ~folder_exists(simulation_index)
+        warning("CylinderMode:MissingPermeabilitySeries", ...
+            "Skipping missing series folder: %s", series_folders(simulation_index));
+    end
+end
+if ~any(folder_exists)
+    error("CylinderMode:NoPermeabilitySeries", ...
+        "None of the requested simulation folders exist under %s.", cfg.data_root);
+end
+
+Da_used = Da_requested(folder_exists);
+series_folders = series_folders(folder_exists);
+
+comparison_tag = cylinder_comparison_tag(Sd, gamy, v);
+cfg.output_root = fullfile(script_dir, "data", ...
+    "cylinder_permeability_compare", comparison_tag);
+
+%%% Configure and run the established mode-analysis pipeline
+
+cfg.frame.first_index = first_frame;
+cfg.frame.last_index = last_frame;
+cfg.frame.stride = frame_stride;
+cfg.frame.max_frames = maximum_frames;
+
+cfg.modes.m_max = 0;
+cfg.modes.n_min = 1;
+cfg.modes.n_max = 6;
+cfg.modes.projection = projection_method;
+
+cfg.core.method = core_method;
+cfg.alignment.axis_mode = axis_mode;
+cfg.alignment.known_axis = known_axis;
+cfg.window.alpha = tukey_alpha;
+
+cfg.growth.mode = growth_fit_mode;
+cfg.growth.fixed_start_time = fixed_fit_start_time;
+cfg.growth.fixed_end_time = fixed_fit_end_time;
+cfg.growth.minimum_points = minimum_fit_points;
+cfg.growth.maximum_points = maximum_fit_points;
+cfg.growth.maximum_early_frames = maximum_early_frames;
+cfg.growth.minimum_amplitude_ratio = minimum_amplitude_ratio;
+cfg.growth.minimum_signal_to_noise = minimum_signal_to_noise;
+cfg.growth.maximum_dimensionless_amplitude = maximum_dimensionless_amplitude;
+cfg.growth.minimum_r_squared = minimum_r_squared;
+cfg.growth.accept_poor_fits = include_poor_fits;
+
+cfg.output.save_frame_csv = false;
+cfg.output.save_mode_csv = false;
+cfg.output.save_growth_csv = save_per_series_growth_csv;
+cfg.output.save_mat = false;
+cfg.output.save_resolved_json = false;
+cfg.diagnostics.enabled = save_per_series_diagnostics;
+cfg.diagnostics.save_individual_fit_plots = save_individual_fit_plots;
+cfg.diagnostics.figure_visible = "off";
+
+cfg.core.minimum_radius_fraction = 0.80;
+cfg.core.transition_margin_in_radii = 3.0;
+cfg.core.fallback_half_length_fraction = 0.20;
+cfg.core.profile_smoothing_bins = 3;
+cfg.core.method = core_method;
+
+cylinder_results = cylinder_mode_pipeline(series_folders, cfg);
+
+%%% Combine the eight fitted rates from every successful simulation
+
+all_growth_rates = table();
+for simulation_index = 1:numel(cylinder_results.series_results)
+    result = cylinder_results.series_results{simulation_index};
+    if ~isfield(result, "growth_rates")
+        warning("CylinderMode:FailedPermeabilitySeries", ...
+            "No growth rates were produced for Da = %.2e.", Da_used(simulation_index));
+        continue
+    end
+
+    rates = result.growth_rates;
+    rates = rates(rates.m == 0 & rates.n >= 1 & rates.n <= 8, :);
+    rates.Da = repmat(Da_used(simulation_index), height(rates), 1);
+    rates.Sd = repmat(Sd, height(rates), 1);
+    rates.gamy = repmat(gamy, height(rates), 1);
+    rates.v = repmat(v, height(rates), 1);
+    rates = movevars(rates, ["Sd", "Da", "gamy", "v"], "Before", 1);
+
+    if isempty(all_growth_rates)
+        all_growth_rates = rates;
+    else
+        all_growth_rates = [all_growth_rates; rates]; %#ok<AGROW>
+    end
+end
+
+if isempty(all_growth_rates)
+    error("CylinderMode:NoGrowthRates", ...
+        "Every available simulation failed before producing growth-rate data.");
+end
+
+comparison_summary = cylinder_results.summary;
+comparison_summary.Da = Da_used;
+comparison_summary.Sd = repmat(Sd, height(comparison_summary), 1);
+comparison_summary.gamy = repmat(gamy, height(comparison_summary), 1);
+comparison_summary.v = repmat(v, height(comparison_summary), 1);
+comparison_summary = movevars(comparison_summary, ...
+    ["Sd", "Da", "gamy", "v"], "Before", 1);
+
+if ~isfolder(cfg.output_root)
+    mkdir(cfg.output_root);
+end
+writetable(all_growth_rates, ...
+    fullfile(cfg.output_root, "cylinder_permeability_growth_rates.csv"));
+writetable(comparison_summary, ...
+    fullfile(cfg.output_root, "cylinder_permeability_summary.csv"));
+
+%%% Plot one m = 0 growth-rate curve per Da
+
+Da_plotted = unique(all_growth_rates.Da, "stable");
+if isempty(Da_color_order)
+    plot_colors = lines(numel(Da_plotted));
+else
+    validateattributes(Da_color_order, {'numeric'}, ...
+        {'2d', 'ncols', 3, '>=', 0, '<=', 1}, ...
+        mfilename, "Da_color_order");
+    repeats = ceil(numel(Da_plotted) / size(Da_color_order, 1));
+    plot_colors = repmat(Da_color_order, repeats, 1);
+    plot_colors = plot_colors(1:numel(Da_plotted), :);
+end
+
+fig = figure( ...
+    "Color", figure_background_color, ...
+    "Visible", figure_visible, ...
+    "Position", figure_position);
+ax = axes(fig);
+hold(ax, "on");
+
+n_values = (1:8).';
+plotted_value_count = 0;
+for simulation_index = 1:numel(Da_plotted)
+    rows = all_growth_rates.Da == Da_plotted(simulation_index);
+    rates = all_growth_rates(rows, :);
+
+    if include_poor_fits
+        accepted = ismember(rates.fit_status, ["good", "poor"]);
+    else
+        accepted = rates.fit_status == "good";
+    end
+
+    sigma = nan(size(n_values));
+    for mode_index = 1:numel(n_values)
+        row = find(rates.n == n_values(mode_index) & accepted ...
+            & isfinite(rates.growth_rate_sigma), 1);
+        if ~isempty(row)
+            sigma(mode_index) = rates.growth_rate_sigma(row);
+        end
+    end
+
+    if y_axis_scale == "log"
+        sigma(sigma <= 0) = NaN;
+    end
+    plotted_value_count = plotted_value_count + nnz(isfinite(sigma));
+
+    plot(ax, n_values, sigma, ...
+        "LineStyle", "-", ...
+        "LineWidth", data_line_width, ...
+        "Marker", marker_symbol, ...
+        "MarkerSize", marker_size, ...
+        "MarkerFaceColor", plot_colors(simulation_index, :), ...
+        "MarkerEdgeColor", plot_colors(simulation_index, :), ...
+        "Color", plot_colors(simulation_index, :), ...
+        "DisplayName", sprintf("Da = %.0e", Da_plotted(simulation_index)));
+
+    fprintf("Da = %.6g: plotted %d of 8 fitted m = 0 modes.\n", ...
+        Da_plotted(simulation_index), nnz(isfinite(sigma)));
+end
+
+if plotted_value_count == 0
+    warning("CylinderMode:NoAcceptedGrowthRates", ...
+        "No finite growth rates satisfy the current fit-status and axis-scale settings.");
+end
+
+if show_zero_line && y_axis_scale == "linear"
+    yline(ax, 0, ":", ...
+        "Color", [0.25, 0.25, 0.25], ...
+        "LineWidth", 1, ...
+        "HandleVisibility", "off");
+end
+
+set(ax, ...
+    "YScale", y_axis_scale, ...
+    "XTick", n_values, ...
+    "XLim", [0.75, 8.25], ...
+    "FontSize", axes_font_size, ...
+    "LineWidth", axes_line_width, ...
+    "Box", "on", ...
+    "XMinorGrid", "off", ...
+    "YMinorGrid", "on", ...
+    "GridAlpha", grid_alpha, ...
+    "MinorGridAlpha", grid_alpha);
+grid(ax, "on");
+xlabel(ax, x_axis_label, "FontSize", label_font_size);
+ylabel(ax, y_axis_label, "FontSize", label_font_size);
+title(ax, plot_title, ...
+    "FontSize", title_font_size, ...
+    "FontWeight", "normal");
+
+if show_legend
+    legend_handle = legend(ax, ...
+        "Location", legend_location, ...
+        "FontSize", legend_font_size, ...
+        "Box", legend_box);
+    legend_handle.AutoUpdate = "off";
+end
+
+xlim([1,6])
+if save_figure
+    exportgraphics(fig, fullfile(cfg.output_root, ...
+        "cylinder_permeability_compare.png"), ...
+        "Resolution", figure_resolution);
+end
+if save_matlab_figure
+    savefig(fig, fullfile(cfg.output_root, ...
+        "cylinder_permeability_compare.fig"));
+end
+if save_combined_mat
+    save(fullfile(cfg.output_root, "cylinder_permeability_compare.mat"), ...
+        "all_growth_rates", "comparison_summary", "Da_used", "Da_plotted", ...
+        "Sd", "gamy", "v", "cfg");
+end
+
+fprintf("Outputs: %s\n", cfg.output_root);
+
+function tag = cylinder_parameter_tag(Sd, Da, gamy, v)
+    tag = sprintf("Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e", ...
+        Sd, Da, gamy, v);
+    tag = strrep(tag, "+", "p");
+    tag = strrep(tag, "-", "m");
+end
+
+function tag = cylinder_comparison_tag(Sd, gamy, v)
+    tag = sprintf("Sd_%.2e_gamy_%+.2e_v_%.2e", Sd, gamy, v);
+    tag = strrep(tag, "+", "p");
+    tag = strrep(tag, "-", "m");
+end

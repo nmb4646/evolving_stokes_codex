@@ -1,14 +1,15 @@
 close all;clear;clc;
 %%% Simulation selection
 % Sd value used in the fs_batch output folder names.
-Sd = [1e2]%,1e3,1.01e4];
+Sd = [1e2,1e3,1.01e4];
 
 % Background shear/extension parameter used in the fs_batch output folder names.
 gamy = 0;
 
 % Darcy numbers to load and plot on the same axes.
 %Da_values = [1e-12,1e-11,1e-10,1e-9, 1e-8, 4e-8,6e-8, 1e-7, 2e-7,4e-7,6e-7,8e-7];%, 1e-6,2e-6,4e-6,6e-6,8e-6,1e-5, 1e-4, 1e-2];
-Da_values = 1
+%Da_values = 0;
+Da_values = 10.^(-10:.5:3);
 
 % Time-step range. If true, use every available geo*.mat frame for each run.
 % If false, use only geo0.mat through geo<maxtimestep>.mat.
@@ -380,6 +381,9 @@ if visual.show_rate_scatter
             end
         end
     end
+
+    xlim([2e-11,5e-4])
+    ylim([1e-10,4e-6])
 
     set(rate_ax, ...
         "FontSize", visual.axes_font_size, ...
