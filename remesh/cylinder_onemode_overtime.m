@@ -11,7 +11,7 @@ clc;
 %%% Simulation and mode parameters
 
 Sd = 1e-6;
-Da_values = [1e-5,1e-4,1e-3,1e-2,1e-1,1e0,1e1];
+Da_values = [1e-5,1e-4,1e-3,1e-2];
 gamy = 4e-6;
 v = 0.35;
 

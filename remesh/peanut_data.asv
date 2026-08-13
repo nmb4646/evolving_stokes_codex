@@ -1,0 +1,68 @@
+close;clear;clc;
+
+Omega = 30;
+
+if Omega == 20
+Hz_vs_d = [1.3126293995859215, 5.844036697247707
+1.4616977225672878, 4.779816513761468
+1.5776397515527951, 3.8073394495412844
+1.7763975155279503, 2.7155963302752295
+2.049689440993789, 1.761467889908257
+2.3312629399585925, 1.1559633027522938
+2.720496894409938, 0.798165137614679
+3.1925465838509317, 0.5229357798165137
+3.6438923395445135, 0.44036697247706424
+4.178053830227744, 0.3853211009174312
+4.674948240165632, 0.3669724770642202];
+elseif Omega == 30
+    Hz_vs_d =[1.2989690721649485, 6.743988684582744
+1.4020618556701032, 6.936350777934937
+1.5010309278350515, 6.664780763790665
+1.5917525773195877, 5.646393210749647
+1.7030927835051546, 4.4582743988684586
+1.8309278350515463, 3.5190947666195194
+2.004123711340206, 2.5346534653465347
+2.2309278350515465, 1.7425742574257426
+2.6309278350515464, 1.1202263083451203
+3.2288659793814434, 0.6562942008486563
+3.6371134020618556, 0.5544554455445545
+3.979381443298969, 0.4752475247524753];
+end
+
+
+Hz_vs_d(:,1) = Hz_vs_d(:,1)-1; %switch from center-center distance to lubrication distance
+
+
+fit_range = 3:8; % Data-point indices used for the scaling fits.
+scaling_fit = polyfit(log(Hz_vs_d(fit_range, 1)), ...
+    log(Hz_vs_d(fit_range, 2)), 1);
+alpha = scaling_fit(1);
+fprintf('Points %d:%d give Hz ~ d^(%.6g).\n', ...
+    fit_range(1), fit_range(end), alpha);
+
+beta = 3; % Theoretical scaling Hz ~ d^(-beta).
+theory_prefactor = exp(mean(log(Hz_vs_d(fit_range, 2)) ...
+    + beta * log(Hz_vs_d(fit_range, 1)+1)));
+Hz_theory = theory_prefactor * (Hz_vs_d(:, 1)+1) .^ (-beta);
+
+
+
+
+
+loglog(Hz_vs_d(:, 1), Hz_vs_d(:, 2), 'o-')
+hold on
+loglog(Hz_vs_d(:, 1), Hz_theory, '--', 'LineWidth', 1.5)
+
+
+b = .1;
+
+
+Hz_lubrication =
+
+legend('Data', sprintf('Far-field (orbiting rotlets) = C d^{-%g}', beta), 'Location', 'best')
+
+
+
+
+xlabel('$\frac{\delta}{a}$',Interpreter='latex',FontSize=20)
+ylabel('\omega_{orb}')

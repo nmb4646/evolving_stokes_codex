@@ -7,13 +7,17 @@ close all; clc; clear;
 k = 100;
 Gamma = 0;
 
-Sd = 1e-6;
-Da = 1e-6;
-gamy = 4*Sd;
-v = .35;
+Sd = 3;
+Da = 0;
+gamy = 3.02;
+v = .802;
 
-plot_stride = 3;
+plot_stride = 4;
 gif_resolution_scale = 1; % GIF pixel dimensions relative to size_x and size_y.
+gif_duration_seconds = 5; % Target playback duration for one complete GIF loop.
+gif_crop_to_frame = true; % Tightly frame the surface selected by frame_edge_mode.
+frame_surface_padding_fraction = 0.9; % Fraction of each axis span added on each side.
+frame_edge_mode = 'last'; % Options: 'first', 'last', or a saved timestep integer (geoN.mat).
 
 override_ids = [];
 
@@ -35,6 +39,7 @@ view_ele = 1;
 view_rotation_angle_deg = 0;
 view_rotation_axis = [0, 1, 0];
 view_rotation_center = [0, 0, 0];
+
 alph = .9;
 edge_color = [.3, .3, .3];
 permeation_color_limits = [-.005, .005]; % Numeric limits shown on the permeation colorbar.
@@ -47,9 +52,8 @@ lighting_options.ambient_strength = 0.35;
 lighting_options.diffuse_strength = 0.75;
 lighting_options.specular_strength = 0.08;
 lighting_options.specular_exponent = 12;
-gif_delay = 1/14;
 size_x = 1000;
-size_y = 900;
+size_y =800;
 
 
 
@@ -176,6 +180,9 @@ geoj = load(fullfile(folder, sprintf("geo%d.mat", tf)));
 geo = Geometry(geoj.M, geoj.P);
 view_rotation = make_view_rotation(view_rotation_angle_deg, view_rotation_axis, view_rotation_center);
 P_view = apply_view_rotation(geoj.P, view_rotation);
+frame_edge_id = resolve_frame_edge_id(frame_edge_mode, frame_ids);
+edge_geoj = load(fullfile(folder, sprintf("geo%d.mat", frame_edge_id)));
+P_edge_view = apply_view_rotation(edge_geoj.P, view_rotation);
 if use_uniform_color
     C = [];
 else
@@ -185,10 +192,9 @@ else
         color_max = color_min + eps;
     end
 end
-edge = 1.08 * max(abs(P_view), [], "all");
-if edge == 0
-    edge = 1;
-end
+[frame_limits, frame_plot_aspect, axes_position] = surface_frame_settings( ...
+    P_edge_view, gif_crop_to_frame, frame_surface_padding_fraction);
+fprintf("Frame bounds use geo%d.mat\n", frame_edge_id);
 
 if isfile(name)
     delete(name);
@@ -200,7 +206,7 @@ validateattributes(gif_resolution_scale, {'numeric'}, ...
     {'scalar', 'real', 'finite', 'positive'}, mfilename, 'gif_resolution_scale');
 gif_render_dpi = max(1, round( ...
     get(groot, 'ScreenPixelsPerInch') * gif_resolution_scale));
-set(ax, 'Units', 'normalized', 'Position', [0.03, 0.03, 0.94, 0.94], ...
+set(ax, 'Units', 'normalized', 'Position', axes_position, ...
     'ActivePositionProperty', 'position', 'Color', [.9, .9, .9]);
 if use_permeation_color
     colormap(ax, diverging_colormap(permeation_color_negative, ...
@@ -261,11 +267,13 @@ axis(ax, 'manual');
 axis(ax, 'equal');
 axis(ax, 'vis3d');
 axis(ax, 'off');
-pbaspect(ax, [1 2 1]);
-xlim(ax, [-edge, edge]);
-ylim(ax, [-edge, edge]);
-zlim(ax, [-edge, edge]);
+pbaspect(ax, frame_plot_aspect);
+xlim(ax, frame_limits(1, :));
+ylim(ax, frame_limits(2, :));
+zlim(ax, frame_limits(3, :));
 view(ax, view_azi, view_ele);
+fit_figure_to_projected_surface(fig, ax, P_edge_view, ...
+    gif_crop_to_frame, size_x, size_y, view_azi, view_ele);
 if lighting_options.enabled
     lighting(ax, lighting_options.face_lighting);
     camlight(ax, 'headlight');
@@ -280,6 +288,10 @@ if ~isempty(override_ids)
 plot_ids = override_ids;
 end
 
+gif_frame_delays = fixed_duration_gif_delays( ...
+    gif_duration_seconds, numel(plot_ids));
+fprintf("GIF playback duration: %.2f seconds across %d frames\n", ...
+    sum(gif_frame_delays), numel(plot_ids));
 
 for frame_idx = 1:numel(plot_ids)
     n = plot_ids(frame_idx);
@@ -352,12 +364,12 @@ for frame_idx = 1:numel(plot_ids)
             size(frame_rgb, 2), size(frame_rgb, 1));
         imwrite(frame_ind, map, name, 'gif', ...
             'LoopCount', inf, ...
-            'DelayTime', gif_delay, ...
+            'DelayTime', gif_frame_delays(frame_idx), ...
             'DisposalMethod', 'restoreBG');
     else
         imwrite(frame_ind, map, name, 'gif', ...
             'WriteMode', 'append', ...
-            'DelayTime', gif_delay, ...
+            'DelayTime', gif_frame_delays(frame_idx), ...
             'DisposalMethod', 'restoreBG');
     end
     gif_frame_count = gif_frame_count + 1;
@@ -389,6 +401,132 @@ function [lo, hi] = percentile_bounds(x, lo_pct, hi_pct)
     hi_idx = max(1, min(n, round(1 + (n - 1) * hi_pct / 100)));
     lo = x(lo_idx);
     hi = x(hi_idx);
+end
+
+function frame_id = resolve_frame_edge_id(mode, frame_ids)
+    if ischar(mode) || (isstring(mode) && isscalar(mode))
+        switch lower(strtrim(string(mode)))
+            case "first"
+                frame_id = frame_ids(1);
+            case "last"
+                frame_id = frame_ids(end);
+            otherwise
+                error("frame_edge_mode must be 'first', 'last', or a saved timestep integer.");
+        end
+    elseif isnumeric(mode) && isscalar(mode) && isfinite(mode) && ...
+            mode >= 0 && mode == fix(mode)
+        frame_id = double(mode);
+    else
+        error("frame_edge_mode must be 'first', 'last', or a saved timestep integer.");
+    end
+
+    if ~ismember(frame_id, frame_ids)
+        error("frame_edge_mode requested geo%d.mat, but that timestep was not found.", frame_id);
+    end
+end
+
+function delays = fixed_duration_gif_delays(duration_seconds, frame_count)
+    validateattributes(duration_seconds, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'positive'}, mfilename, ...
+        'gif_duration_seconds');
+    validateattributes(frame_count, {'numeric'}, ...
+        {'scalar', 'integer', 'positive'}, mfilename, 'frame_count');
+
+    target_ticks = max(1, round(100 * duration_seconds));
+    if frame_count > target_ticks
+        warning("fs_plotter:GifDurationTooShort", ...
+            "A %.2f-second GIF cannot reliably display %d frames because " ...
+            + "GIF delays have 0.01-second resolution. Using %.2f seconds.", ...
+            duration_seconds, frame_count, frame_count / 100);
+        target_ticks = frame_count;
+    end
+
+    base_ticks = floor(target_ticks / frame_count);
+    extra_tick_count = mod(target_ticks, frame_count);
+    delay_ticks = base_ticks * ones(1, frame_count);
+    if extra_tick_count > 0
+        extra_tick_ids = floor( ...
+            ((1:extra_tick_count) - 0.5) * frame_count / extra_tick_count) + 1;
+        delay_ticks(extra_tick_ids) = delay_ticks(extra_tick_ids) + 1;
+    end
+    delays = delay_ticks / 100;
+end
+
+function [limits, plot_aspect, axes_position] = surface_frame_settings( ...
+        P, tight_enabled, padding_fraction)
+    if tight_enabled
+        limits = tight_surface_limits(P, padding_fraction);
+        plot_aspect = diff(limits, 1, 2).';
+        axes_position = [0, 0, 1, 1];
+        return
+    end
+
+    edge = 1.08 * max(abs(P), [], "all");
+    if edge == 0
+        edge = 1;
+    end
+    limits = repmat([-edge, edge], 3, 1);
+    plot_aspect = [1, 2, 1];
+    axes_position = [0.03, 0.03, 0.94, 0.94];
+end
+
+function limits = tight_surface_limits(P, padding_fraction)
+    validateattributes(P, {'numeric'}, ...
+        {'2d', 'ncols', 3, 'real', 'finite', 'nonempty'}, mfilename, 'P');
+    validateattributes(padding_fraction, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'nonnegative'}, mfilename, ...
+        'frame_surface_padding_fraction');
+
+    coordinate_min = min(P, [], 1);
+    coordinate_max = max(P, [], 1);
+    coordinate_span = coordinate_max - coordinate_min;
+    overall_span = max(coordinate_span);
+    if overall_span == 0
+        overall_span = 1;
+    end
+
+    coordinate_span = max(coordinate_span, overall_span * 1e-6);
+    coordinate_center = 0.5 * (coordinate_min + coordinate_max);
+    half_span = (0.5 + padding_fraction) .* coordinate_span;
+    limits = [coordinate_center - half_span; ...
+              coordinate_center + half_span].';
+end
+
+function fit_figure_to_projected_surface( ...
+        fig, ax, P, enabled, base_width, base_height, view_azi, view_ele)
+    if ~enabled
+        return
+    end
+
+    camera_direction = ax.CameraTarget - ax.CameraPosition;
+    camera_direction = camera_direction / norm(camera_direction);
+    screen_up = ax.CameraUpVector;
+    screen_up = screen_up - dot(screen_up, camera_direction) * camera_direction;
+    screen_up = screen_up / norm(screen_up);
+    screen_right = cross(camera_direction, screen_up);
+    screen_right = screen_right / norm(screen_right);
+
+    projected_horizontal = P * screen_right.';
+    projected_vertical = P * screen_up.';
+    projected_width = max(projected_horizontal) - min(projected_horizontal);
+    projected_height = max(projected_vertical) - min(projected_vertical);
+    if projected_width <= 0 || projected_height <= 0
+        return
+    end
+
+    projected_aspect = projected_width / projected_height;
+    pixel_budget = base_width * base_height;
+    fitted_width = max(1, round(sqrt(pixel_budget * projected_aspect)));
+    fitted_height = max(1, round(sqrt(pixel_budget / projected_aspect)));
+
+    figure_position = fig.Position;
+    figure_position(3:4) = [fitted_width, fitted_height];
+    fig.Position = figure_position;
+
+    ax.CameraViewAngleMode = 'auto';
+    view(ax, view_azi, view_ele);
+    drawnow;
+    fprintf("Tight figure size: %d x %d pixels\n", fitted_width, fitted_height);
 end
 
 function view_rotation = make_view_rotation(angle_deg, axis, center)

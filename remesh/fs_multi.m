@@ -38,6 +38,25 @@ end
 if ~isfield(p, 'remesh_size')
     p.remesh_size = 0;
 end
+if ~isfield(p, 'remesh_backend')
+    p.remesh_backend = "legacy";
+end
+if ~isfield(p, 'remesh_options')
+    p.remesh_options = struct();
+end
+if ~isfield(p, 'constraint_projection')
+    if lower(string(p.remesh_backend)) == "mmgs"
+        p.constraint_projection = "mass";
+    else
+        p.constraint_projection = "legacy";
+    end
+end
+if ~isfield(p, 'constraint_projection_options')
+    p.constraint_projection_options = struct();
+end
+if ~isfield(p, 'project_stuck_remesh_constraints')
+    p.project_stuck_remesh_constraints = lower(string(p.constraint_projection)) ~= "legacy";
+end
 if ~isfield(p, 'initial_remesh')
     p.initial_remesh = true;
 end
@@ -98,9 +117,9 @@ start = p.start;
 
 addpath('./isoremesh')
 
-hasRemesher = (exist('remeshing', 'file') ~= 0);
+hasRemesher = remeshing_backend_available(p);
 if ~hasRemesher
-    warning('Remesher is not installed and has been disabled.');
+    warning('%s remesher is not installed and has been disabled.', p.remesh_backend);
 end
 
 if start == 0
@@ -134,11 +153,11 @@ if start == 0
         % [P,M] = rotate_vesicle(P,M,.5-phi0,"y");
 
         % For narsimhan figure 4
-        [M,P] = initial_capsule(p.v,p.subdivisions);
+        %[M,P] = initial_capsule(p.v,p.subdivisions);
         %For BGN figure
-        % biconcave = load("biconcave.mat");
-        % P = biconcave.P;M=biconcave.M;
-        % [P,M] = rotate_vesicle(P,M,.5,"y");
+        biconcave = load("biconcave.mat");
+        P = biconcave.P;M=biconcave.M;
+        [P,M] = rotate_vesicle(P,M,.5,"y");
         
     end
 
@@ -147,10 +166,9 @@ if start == 0
     if p.initial_remesh && hasRemesher
         disp('Remeshing at start')
         geo_pre = geo;
-        [M, P] = remeshing(int32(M), P, int32([]), mean(geo.he_length), int32(100));
-        M = cast(M, "double");
+        [M, P] = remesh_membrane(M, P, 1.7 * mean(geo.he_length), 100, p);
         geo = Geometry(M, P);
-        [P, geo] = newton_correct_volume(geo, geo_pre.area, geo_pre.volume);
+        [P, geo] = correct_remesh_constraints(geo, geo_pre.area, geo_pre.volume, p);
     end
     if p.roughness ~= 0
         geo = perturb_rand(geo, p.roughness);
@@ -233,6 +251,8 @@ else
         "tol_b", "tol_c", "tol_d", "max_iter", "h", "eta", ...
         "precondition_system", "project_dP_translation", ...
         "conserve_slp_volume", ...
+        "remesh_backend", "remesh_options", "constraint_projection", ...
+        "constraint_projection_options", "project_stuck_remesh_constraints", ...
         "bending_hessian_mode", ...
         "line_search", "line_search_tau", "line_search_max_iter", "line_search_c", ...
         "line_search_wb", "line_search_wc", "line_search_wd"];
@@ -250,6 +270,25 @@ else
     end
     if ~isfield(p, 'conserve_slp_volume')
         p.conserve_slp_volume = false;
+    end
+    if ~isfield(p, 'remesh_backend')
+        p.remesh_backend = "legacy";
+    end
+    if ~isfield(p, 'remesh_options')
+        p.remesh_options = struct();
+    end
+    if ~isfield(p, 'constraint_projection')
+        if lower(string(p.remesh_backend)) == "mmgs"
+            p.constraint_projection = "mass";
+        else
+            p.constraint_projection = "legacy";
+        end
+    end
+    if ~isfield(p, 'constraint_projection_options')
+        p.constraint_projection_options = struct();
+    end
+    if ~isfield(p, 'project_stuck_remesh_constraints')
+        p.project_stuck_remesh_constraints = lower(string(p.constraint_projection)) ~= "legacy";
     end
     if ~isfield(p, 'bending_hessian_mode')
         p.bending_hessian_mode = "exact";
@@ -319,16 +358,17 @@ else
         disp("Remeshing on start")
         r.edge_length = p.remesh_size * mean(geo.he_length);
         geo_pre = geo;
-        [M, P] = remeshing(int32(M), P, int32([]), r.edge_length, int32(20));
-
-        M = cast(M, "double");
+        [M, P] = remesh_membrane(M, P, r.edge_length, 20, p);
         geo = Geometry(M, P);
 
-        [P, smooth_info] = valence_neighbor_average_smooth(M, P, ...
-        [5, 7], 1, .25);
+        if lower(string(p.remesh_backend)) == "legacy"
+            [P, smooth_info] = valence_neighbor_average_smooth(M, P, ...
+                [5, 7], 1, .25);
+        end
 
         geo = Geometry(M, P);
-        [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
+        [P, geo] = correct_remesh_constraints(geo, p.area0, ...
+            remesh_target_volume(geo_pre, p), p);
         [velocity, f] = map_data(geo, geo_pre, velocity, f);
         slp_cache = stokeslet_SLP_triangle_setup(M);
         disp("Old: " + length(geo_pre.V))
@@ -433,8 +473,8 @@ for t = (start + 1):p.T
         b = p.dt * force_balance_residual(P, P0, M, f, lambda, KTK, DTD, p);
         P_bie = reshape(P0, [], 3);
         geo_bie = Geometry(M, P_bie);
-        %u_background = shear_flow(P_bie, p.gamy);
-        u_background = extensional_flow(P_bie,p.gamy);%poiseuille_flow(P_bie,p.gamy,12.5);
+        u_background = shear_flow(P_bie, p.gamy);
+        %u_background = extensional_flow(P_bie,p.gamy);%poiseuille_flow(P_bie,p.gamy,12.5);
         c = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
 
 
@@ -596,22 +636,23 @@ for t = (start + 1):p.T
 
             geo_pre = Geometry(M, P);
             if stuck_remesh_shrink
-                stuck_remesh_factor = 0.97;
+                stuck_remesh_factor = .98;
             else
-                stuck_remesh_factor = 1.05;
+                stuck_remesh_factor = .99;
             end
             stuck_remesh_shrink = ~stuck_remesh_shrink;
-            [M, P] = remeshing(int32(M), P, int32([]), ...
-                stuck_remesh_factor * mean(geo_pre.he_length), int32(20));
-    
-            M = cast(M, "double");
+            [M, P] = remesh_membrane(M, P, ...
+                stuck_remesh_factor * mean(geo_pre.he_length), 20, p);
 
-            [P, ~] = valence_neighbor_average_smooth(M, P, ...
-            [5, 7], 1, .25);
+            if lower(string(p.remesh_backend)) == "legacy"
+                [P, ~] = valence_neighbor_average_smooth(M, P, ...
+                    [5, 7], 1, .25);
+            end
     
             geo = Geometry(M, P);
-            if false
-                [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
+            if p.project_stuck_remesh_constraints
+                [P, geo] = correct_remesh_constraints(geo, p.area0, ...
+                    remesh_target_volume(geo_pre, p), p);
             end
             [velocity, f] = map_data(geo, geo_pre, velocity, f);
             slp_cache = stokeslet_SLP_triangle_setup(M);
@@ -666,19 +707,18 @@ for t = (start + 1):p.T
     [P, velocity] = rm_rigid_patched(P, (P(:) - P0) / p.dt, geo.v_area,"translation");
     geo = Geometry(M, P);
 
-    if 0 %hasRemesher && deformation_criterion(geo)
+    if 1%hasRemesher && deformation_criterion(geo)
         geo_pre = geo;
         if ~supress_outputs
             fprintf("Remeshing. t = %d \n", t);
         end
-        [M, P] = remeshing(int32(M), P, int32([]), r.edge_length, int32(r.n_iter));
-
-        M = cast(M, "double");
+        [M, P] = remesh_membrane(M, P, r.edge_length, r.n_iter, p);
         geo = Geometry(M, P);
         
-        if false
+        if true
             %fprintf("Reduced volume before correction: %.9f\n", reduced_volume(geo));
-            [P, geo] = newton_correct_volume(geo, p.area0, remesh_target_volume(geo_pre, p));
+            [P, geo] = correct_remesh_constraints(geo, p.area0, ...
+                remesh_target_volume(geo_pre, p), p);
             %fprintf("Reduced volume after correction: %.9f\n", reduced_volume(geo));
         end
 
