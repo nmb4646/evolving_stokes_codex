@@ -1,0 +1,92 @@
+﻿Shaqfeh (2011) / Kantsler (2009) / Kantsler (2011) comparison:
+
+
+subdivisions = 7
+T = 200
+k = 100
+Da = [0]
+Sd = [1e-6]
+Gamma = 0
+gamy = [8e-6,8e-5]
+v = [0.988940,0.97734,0.96597,0.954817,0.9438,0.93314,0.9226,0.91227,0.90213,0.89217,0.88240,0.87280]
+dt = lambda Da, Sd, gamy: .01/gamy
+
+
+Resmeshing ON
+
+
+
+
+BGN (2015) comparison:
+
+
+subdivisions = 7
+T = 10000
+k = 100
+Da = [0]
+Sd = [3]
+Gamma = 0
+gamy = [30]
+v = [.80]
+dt = lambda Da, Sd, gamy: .009/gamy
+
+
+Remeshing ON
+
+
+
+
+Relaxations at intermediate Sd
+
+
+subdivisions = 12
+T = 200
+k = 1000 for sims above Sd =1, and then 1000*(Sd^-1) lower than that
+Da = [0]
+Sd = [3e-3…3e2]
+Gamma = 0
+gamy = [0]
+
+
+v = .97
+dt = lambda Da, Sd, gamy: for Sd<1e3 (Sd**(-1))/10. Greater,
+Sd 3e1, dt 1e-2
+Sd 1e2, dt 8e-3
+Sd 3e2, dt 6e-3
+
+
+Remeshing OFF
+
+
+Pearling at low Sd
+
+
+subdivisions = 75
+T = 400
+k = 100
+Da = [0]
+Sd = 1e-6
+Gamma = 0
+gamy = 3.7*Sd
+v = .35
+dt = lambda Da, Sd, gamy: (5e-3)/(gamy)
+
+
+Remeshing ON or OFF, elongational flow, using initial capsule geometry
+
+
+Shear, permeation, steady shapes
+
+
+subdivisions = 49
+T = 10000
+k = 100
+Da = [1e-1]
+Sd = 1e-6
+Gamma = 0
+gamy = [1.01e-6,1.01e-5]
+
+
+v = .35
+v = [.9,.7,.5]
+dt = lambda Da, Sd, gamy: .03/(gamy)

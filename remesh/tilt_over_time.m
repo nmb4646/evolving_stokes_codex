@@ -9,12 +9,12 @@ close all; clc; clear;
 % Edit these values to select
 %  runs from data/fs_batch_data.
 Da = 0;
-Sd = [1e-6];
-gamy = [8.01e-6];
-v = .873;
+Sd = [3];
+gamy = [3.02];
+v = .802;
 
 % First geo timestep to include. Use 0 to include geo0.mat.
-time_start = 100;
+time_start = 1400;
 % Last geo timestep to include. Use inf to include all later frames.
 time_final = inf;
 

@@ -1,0 +1,6 @@
+pyvista==0.46.5
+vtk==9.5.2
+numpy==2.2.6
+scipy==1.15.3
+matplotlib==3.10.9
+pillow==12.3.0

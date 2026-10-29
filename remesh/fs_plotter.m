@@ -3,23 +3,22 @@ close all; clc; clear;
 % Barebones plotter for fs_multi output.
 % Override run_tag/directory/name before running if needed.
 
-
 k = 100;
 Gamma = 0;
 
-Sd = 3;
+Sd = 1;
 Da = 0;
-gamy = 3.02;
+gamy = .502;
 v = .802;
 
-plot_stride = 4;
-gif_resolution_scale = 1; % GIF pixel dimensions relative to size_x and size_y.
-gif_duration_seconds = 5; % Target playback duration for one complete GIF loop.
+plot_stride = 20;
+gif_resolution_scale = .5; % GIF pixel dimensions relative to size_x and size_y.
+gif_duration_seconds = 4; % Target playback duration for one complete GIF loop.
 gif_crop_to_frame = true; % Tightly frame the surface selected by frame_edge_mode.
-frame_surface_padding_fraction = 0.9; % Fraction of each axis span added on each side.
+frame_surface_padding_fraction = 0.5; % Fraction of each axis span added on each side.
 frame_edge_mode = 'last'; % Options: 'first', 'last', or a saved timestep integer (geoN.mat).
 
-override_ids = [];
+override_ids = [1:50:10000];
 
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e', Sd, Da, gamy, v);
 run_tag = strrep(run_tag, '+', 'p');
@@ -34,15 +33,18 @@ name = directory + run_tag + ".gif";
 fprintf("Plotting %s\n", folder);
 fprintf("Writing %s\n", name);
 
-view_azi = -1;
-view_ele = 1;
+view_azi = -3;
+view_ele = 10;
 view_rotation_angle_deg = 0;
 view_rotation_axis = [0, 1, 0];
 view_rotation_center = [0, 0, 0];
 
 alph = .9;
 edge_color = [.3, .3, .3];
-permeation_color_limits = [-.005, .005]; % Numeric limits shown on the permeation colorbar.
+color_limit_mode = "endpoints"; % Options: "endpoints", "final", or "manual".
+color_limit_percentiles = [0, 100]; % Set [2, 98] to reduce the influence of outliers.
+curvature_color_limits = [0, 2]; % Used only when color_limit_mode is "manual".
+permeation_color_limits = [-.005, .005]; % Used only when color_limit_mode is "manual".
 permeation_color_negative = [0.05, 0.20, 1.00]; % Royal blue at the lower limit.
 permeation_color_neutral = [1.00, 1.00, 1.00]; % Color at zero.
 permeation_color_positive = [1.00, 0.05, 0.05]; % Bright red at the upper limit.
@@ -173,9 +175,9 @@ if plot_ids(end) ~= tf
 end
 plot_ids = unique(plot_ids, 'stable');
 
-geoj = load(fullfile(folder, sprintf("geo%d.mat", 0)));
-geo = Geometry(geoj.M, geoj.P);
-volume0 = geo.volume;
+first_geoj = load(fullfile(folder, sprintf("geo%d.mat", frame_ids(1))));
+first_geo = Geometry(first_geoj.M, first_geoj.P);
+volume0 = first_geo.volume;
 geoj = load(fullfile(folder, sprintf("geo%d.mat", tf)));
 geo = Geometry(geoj.M, geoj.P);
 view_rotation = make_view_rotation(view_rotation_angle_deg, view_rotation_axis, view_rotation_center);
@@ -187,10 +189,45 @@ if use_uniform_color
     C = [];
 else
     C = frame_color_data(geoj, geo, color_mode, gamy, color_smoothing);
-    [color_min, color_max] = percentile_bounds(C, 2, 98);
-    if color_max <= color_min
-        color_max = color_min + eps;
+    validateattributes(color_limit_percentiles, {'numeric'}, ...
+        {'vector', 'numel', 2, 'real', 'finite', 'increasing', '>=', 0, '<=', 100}, ...
+        mfilename, 'color_limit_percentiles');
+    switch string(color_limit_mode)
+        case "endpoints"
+            C_first = frame_color_data(first_geoj, first_geo, color_mode, gamy, color_smoothing);
+            [first_min, first_max] = percentile_bounds( ...
+                C_first, color_limit_percentiles(1), color_limit_percentiles(2));
+            [last_min, last_max] = percentile_bounds( ...
+                C, color_limit_percentiles(1), color_limit_percentiles(2));
+            color_min = min(first_min, last_min);
+            color_max = max(first_max, last_max);
+        case "final"
+            [color_min, color_max] = percentile_bounds( ...
+                C, color_limit_percentiles(1), color_limit_percentiles(2));
+        case "manual"
+            if use_permeation_color
+                manual_limits = permeation_color_limits;
+            else
+                manual_limits = curvature_color_limits;
+            end
+            validateattributes(manual_limits, {'numeric'}, ...
+                {'vector', 'numel', 2, 'real', 'finite', 'increasing'}, ...
+                mfilename, 'manual color limits');
+            color_min = manual_limits(1);
+            color_max = manual_limits(2);
+        otherwise
+            error("color_limit_mode must be 'endpoints', 'final', or 'manual'.");
     end
+    if use_permeation_color && string(color_limit_mode) ~= "manual"
+        color_extent = max([abs(color_min), abs(color_max), eps]);
+        color_min = -color_extent;
+        color_max = color_extent;
+    end
+    if color_max <= color_min
+        color_max = color_min + eps(max(1, abs(color_min)));
+    end
+    fprintf("Color limits (%s): [%.6g, %.6g]\n", ...
+        string(color_limit_mode), color_min, color_max);
 end
 [frame_limits, frame_plot_aspect, axes_position] = surface_frame_settings( ...
     P_edge_view, gif_crop_to_frame, frame_surface_padding_fraction);
@@ -211,7 +248,7 @@ set(ax, 'Units', 'normalized', 'Position', axes_position, ...
 if use_permeation_color
     colormap(ax, diverging_colormap(permeation_color_negative, ...
         permeation_color_neutral, permeation_color_positive, 256));
-    clim(ax, permeation_color_limits);
+    clim(ax, [color_min, color_max]);
     colorbar(ax);
 else
     colormap(ax, turbo(256));
@@ -302,16 +339,15 @@ for frame_idx = 1:numel(plot_ids)
     tilt_out = vesicleTiltDeformation(geoj.P, geoj.M, 1, 3, tilt_deformation_axis_length_method);
     disp("Tilt angle: " + tilt_out.psi/pi)
     
-    disp("Deformation index: " + tilt_out.D)
-
+    %disp("Deformation index: " + tilt_out.D)
     %disp("Reduced volume: "+reduced_volume(geo))
 
     fprintf("Reduced volume: %.9f\n", reduced_volume(geo));
 
     %disp((geo.volume - 4/3*pi)/(4/3*pi));
-    fprintf("Volume: %.9f\n", geo.volume/volume0);
+    %fprintf("Volume: %.9f\n", geo.volume/volume0);
 
-    fprintf("Willmore: %.9f\n", geo.willmore_energy(1));
+    %fprintf("Willmore: %.9f\n", geo.willmore_energy(1));
 
     if ~use_uniform_color
         C = frame_color_data(geoj, geo, color_mode, gamy, color_smoothing);
@@ -588,7 +624,7 @@ function C = frame_color_data(geoj, geo, color_mode, ~, color_smoothing)
         case {"uniform", "surface", "uniform_surface"}
             C = [];
         case "curvature"
-            C = geo.v_mean_curvature ./ geo.v_area;
+            C = geo.v_gaussian_curvature ./ geo.v_area;
             C = maybe_smooth_color_data(C, geo, color_smoothing.curvature);
         case {"permeation", "permeation_velocity", "permeation_norm"}
             if ~isfield(geoj, 'f')

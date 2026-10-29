@@ -379,7 +379,7 @@ else
     % o.tol_b = 1e-8;
     % o.tol_c = 1e-7;
     % o.tol_d = 1e-7;
-        p.bending_hessian_mode = "exact";
+        %p.bending_hessian_mode = "exact";
 
     %.h = o.h*3;
     %o.eta = 0;
@@ -476,26 +476,6 @@ for t = (start + 1):p.T
         u_background = shear_flow(P_bie, p.gamy);
         %u_background = extensional_flow(P_bie,p.gamy);%poiseuille_flow(P_bie,p.gamy,12.5);
         c = bie_residual(P_bie, M, f, geo_bie, u, u_background, slp_cache, p);
-
-
-        % I will comment out from here ...
-        % full_rhs = [
-        %     -b(:);
-        %     -c(:);
-        % ];
-        % full_step = full_Jac \ full_rhs;
-        % 
-        % 
-        % alpha = p.chi;
-        % dP = full_step(1:n_state);
-        % df = reshape(full_step((n_state + 1):end), size(P));
-        % P = reshape(P(:) + alpha * dP, [], 3);
-        % f = f + alpha * df;
-        % geo = Geometry(M, P);
-        % ls_iter = 1;
-        %... to here.
-
-        % Codex: only add stuff in these bounds...
 
         Hess = hess_base + p.dt * bending_hessian_for_solver(geo, bih, p) ...
             + hess_regularization;
@@ -601,8 +581,6 @@ for t = (start + 1):p.T
             ls_iter = 1;
         end
         geo = Geometry(M, P);
-
-        % ... to here
 
         
         u = reshape((P(:) - P0) / p.dt, size(P));

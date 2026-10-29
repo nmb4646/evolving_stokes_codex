@@ -4,3 +4,7 @@ remesh/mmgs/vendor/
 remesh/mmgs/build/
 remesh/mmgs/install/
 remesh/mmgs/*.mexa64
+
+/remesh/.venv-curvature-flow/
+
+/remesh/__pycache__/

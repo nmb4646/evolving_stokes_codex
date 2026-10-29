@@ -3,23 +3,22 @@ close all; clc; clear;
 % Barebones plotter for fs_multi output.
 % Override run_tag/directory/name before running if needed.
 
-
 k = 100;
 Gamma = 0;
 
-Sd = 3;r
+Sd = 3;
 Da = 0;
-gamy = 30;
+gamy = 3.02;
 v = .802;
 
-plot_stride = 1;
+plot_stride = 20;
 gif_resolution_scale = 1; % GIF pixel dimensions relative to size_x and size_y.
 gif_duration_seconds = 5; % Target playback duration for one complete GIF loop.
 gif_crop_to_frame = true; % Tightly frame the surface selected by frame_edge_mode.
 frame_surface_padding_fraction = 0.9; % Fraction of each axis span added on each side.
 frame_edge_mode = 'last'; % Options: 'first', 'last', or a saved timestep integer (geoN.mat).
 
-override_ids = [];
+override_ids = [100:100:2000];
 
 run_tag = sprintf('Sd_%.2e_Da_%.2e_gamy_%+.2e_v_%.2e', Sd, Da, gamy, v);
 run_tag = strrep(run_tag, '+', 'p');
@@ -58,7 +57,7 @@ size_y =800;
 
 
 if ~exist('show_velocity', 'var')
-    show_velocity = true;
+    show_velocity = false;
 end
 if ~exist('velocity_stride', 'var')
     velocity_stride = 1;
@@ -302,16 +301,15 @@ for frame_idx = 1:numel(plot_ids)
     tilt_out = vesicleTiltDeformation(geoj.P, geoj.M, 1, 3, tilt_deformation_axis_length_method);
     disp("Tilt angle: " + tilt_out.psi/pi)
     
-    disp("Deformation index: " + tilt_out.D)
-
+    %disp("Deformation index: " + tilt_out.D)
     %disp("Reduced volume: "+reduced_volume(geo))
 
     fprintf("Reduced volume: %.9f\n", reduced_volume(geo));
 
     %disp((geo.volume - 4/3*pi)/(4/3*pi));
-    fprintf("Volume: %.9f\n", geo.volume/volume0);
+    %fprintf("Volume: %.9f\n", geo.volume/volume0);
 
-    fprintf("Willmore: %.9f\n", geo.willmore_energy(1));
+    %fprintf("Willmore: %.9f\n", geo.willmore_energy(1));
 
     if ~use_uniform_color
         C = frame_color_data(geoj, geo, color_mode, gamy, color_smoothing);
